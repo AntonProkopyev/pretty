@@ -47,6 +47,9 @@ border = 2
 # CLI: -cr COLOR — Set the cursor RGB color; omit the key to use the foreground color.
 cr = "#88c0d0"
 
+# CLI: -cursorShape SHAPE — Set the default cursor to block, underline, or bar.
+cursorShape = "block"
+
 # CLI: -dump PATH — Write raw PTY input to PATH; normally omitted.
 # dump = "/tmp/shitty.pty"
 
@@ -64,6 +67,10 @@ fontsize = 15
 
 # CLI: -geometry COLSxROWS — Set the initial terminal grid size.
 geometry = "80x24"
+
+# CLI: -globalHotkey CHORD — Register Ctrl+` as a global Windows window toggle.
+# Omit this key to leave the system shortcut unregistered.
+# globalHotkey = "ctrl+`"
 
 # CLI: -kittyCtrlBaseLayout / +kittyCtrlBaseLayout — Report the ASCII base key as Kitty's primary key under Ctrl.
 kittyCtrlBaseLayout = false

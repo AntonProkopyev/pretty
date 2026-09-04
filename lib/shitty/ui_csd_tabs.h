@@ -19,3 +19,6 @@ struct Composer;
 // drives SessionSet from clicks. Nothing calls the object afterwards;
 // off macOS nothing defines this.
 void createCsdTabsUi(stl::ObjPool& owner, Composer& composer);
+
+// Windows chrome uses the same session model in a custom non-client strip.
+void createCsdTabsWin32Ui(stl::ObjPool& owner, Composer& composer);
