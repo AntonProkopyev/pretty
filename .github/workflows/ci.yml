@@ -114,7 +114,7 @@ jobs:
             build-essential clang lld llvm make python3 perl pkg-config \
             cmake ninja-build git curl unzip zip ragel glslang-tools librsvg2-bin \
             gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix \
-            wine64 xvfb xauth mesa-vulkan-drivers libvulkan1
+            wine xvfb xauth mesa-vulkan-drivers libvulkan1
 
       - name: Fetch pinned llvm-mingw and vcpkg
         shell: bash
@@ -158,7 +158,7 @@ jobs:
           set -euo pipefail
           export WINEDEBUG=-all
           export VK_ICD_FILENAMES="$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)"
-          timeout 60 xvfb-run -a wine64 "$RUNNER_TEMP/windows-tests/windows_vulkan_test.exe"
+          timeout 60 xvfb-run -a wine "$RUNNER_TEMP/windows-tests/windows_vulkan_test.exe"
 
       - name: Assemble and audit Windows artifact
         shell: bash
@@ -178,6 +178,7 @@ jobs:
           cp "$toolchain/x86_64-w64-mingw32/bin/libunwind.dll" "$package/"
           cp "$(x86_64-w64-mingw32-g++ -print-file-name=libgcc_s_seh-1.dll)" "$package/"
           cp "$(x86_64-w64-mingw32-g++ -print-file-name=libstdc++-6.dll)" "$package/"
+          cp "$(x86_64-w64-mingw32-g++ -print-file-name=libwinpthread-1.dll)" "$package/"
           python3 dev/windows/audit_pe.py \
             --objdump "$toolchain/bin/llvm-objdump" \
             --root "$package" st.exe pt.exe \

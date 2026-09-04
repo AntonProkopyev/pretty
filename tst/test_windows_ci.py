@@ -31,6 +31,20 @@ class WindowsCiContractTests(unittest.TestCase):
         self.assertIn("missing", source)
         self.assertIn("recursive", source)
 
+    def test_software_vulkan_uses_packaged_wine_launcher(self):
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+
+        self.assertIn("wine xvfb", workflow)
+        self.assertIn(
+            'xvfb-run -a wine "$RUNNER_TEMP/windows-tests/windows_vulkan_test.exe"',
+            workflow,
+        )
+
+    def test_windows_artifact_includes_mingw_thread_runtime(self):
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+
+        self.assertIn("-print-file-name=libwinpthread-1.dll", workflow)
+
 
 if __name__ == "__main__":
     unittest.main()

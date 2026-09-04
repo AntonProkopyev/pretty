@@ -1167,11 +1167,6 @@ namespace {
             [](void* data, struct zwp_text_input_v3*, u32) {
         ((PlatformImpl*)(data))->textInputDone();
     },
-        // Version 2 events; never delivered because the manager is bound at
-        // version 1.
-        .action = [](void*, struct zwp_text_input_v3*, u32, u32) {},
-        .language = [](void*, struct zwp_text_input_v3*, const char*) {},
-        .preedit_hint = [](void*, struct zwp_text_input_v3*, u32, u32, u32) {},
     };
 
     u32 cursorShape(PointerIcon icon, u32 version) {

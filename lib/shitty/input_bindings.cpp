@@ -95,6 +95,9 @@ namespace {
         {InputActions::NextTab, {InputKey::Printable, InputControl | InputShift, ']'}},
         {InputActions::NextTab, {InputKey::Printable, InputControl | InputShift, '}'}},
         {InputActions::Clear, {InputKey::Printable, InputControl | InputShift, 'l', 'L'}},
+#if defined(_WIN32)
+        {InputActions::ReloadConfig, {InputKey::Printable, InputControl | InputShift, 'r', 'R'}},
+#endif
 #else
     #error Unsupported platform
 #endif

@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import os
+import subprocess
 import time
 import zipfile
 from pathlib import Path
@@ -55,6 +56,32 @@ def zip_info(name, date_time):
     return info
 
 
+def verify_entry(objdump, readobj, image):
+    metadata = subprocess.run(
+        [objdump, "-p", image],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+    ).stdout
+    resources = subprocess.run(
+        [readobj, "--coff-resources", image],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+    ).stdout
+    required = ("Type: RT_MANIFEST", "Type: ICON", "Type: GROUP_ICON")
+    missing = [item for item in required if item not in resources]
+    gui = "Subsystem               00000002" in metadata
+    if missing or not gui:
+        raise RuntimeError(
+            f"invalid release PE resources for {image.name}: "
+            f"gui={gui} missing={missing}"
+        )
+    return {"gui_subsystem": gui, "resources": list(required)}
+
+
 def package(arguments):
     closure = recursive_closure(
         arguments.objdump,
@@ -68,6 +95,14 @@ def package(arguments):
         )
     if not all(image["coff_x86_64"] for image in closure["images"]):
         raise RuntimeError("Windows package contains a non-AMD64 PE image")
+    closure["entry_resources"] = {
+        entry: verify_entry(
+            arguments.objdump,
+            arguments.readobj,
+            arguments.runtime_dir / entry,
+        )
+        for entry in ("st.exe", "pt.exe")
+    }
 
     files = {
         image["path"]: content(arguments.runtime_dir / image["path"])
@@ -124,6 +159,7 @@ def main():
     parser.add_argument("--llvm-license", type=Path, required=True)
     parser.add_argument("--gcc-copyright", type=Path, required=True)
     parser.add_argument("--objdump", required=True)
+    parser.add_argument("--readobj", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(
         "--timestamp",

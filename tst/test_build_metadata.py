@@ -256,6 +256,7 @@ class BuildMetadataTests(unittest.TestCase):
             runner.signal,
             "pthread_sigmask",
             side_effect=AssertionError("POSIX supervisor used on Windows"),
+            create=True,
         ):
             self.assertEqual(runner.supervised_main(["--list"]), 7)
 

@@ -25,6 +25,7 @@ enum class InputActions : u8 {
     IncFontSize,
     DecFontSize,
     ResetFontSize,
+    ReloadConfig,
     NewTab,
     CloseTab,
     PrevTab,

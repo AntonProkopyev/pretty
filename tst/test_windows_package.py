@@ -17,6 +17,9 @@ class WindowsPackageContractTests(unittest.TestCase):
         self.assertIn("ZipInfo", source)
         self.assertIn("SHA256SUMS", source)
         self.assertIn("SOURCE_DATE_EPOCH", source)
+        self.assertIn("--readobj", source)
+        self.assertIn("RT_MANIFEST", source)
+        self.assertIn("GROUP_ICON", source)
 
     def test_packager_includes_configs_and_licenses(self):
         source = (ROOT / "dev/windows/package.py").read_text()
@@ -47,6 +50,7 @@ class WindowsPackageContractTests(unittest.TestCase):
         self.assertIn("test-windows:", workflow)
         self.assertIn("shitty-windows-x86_64.zip", workflow)
         self.assertIn("--extra-artifact", workflow)
+        self.assertIn("-print-file-name=libwinpthread-1.dll", workflow)
 
 
 if __name__ == "__main__":

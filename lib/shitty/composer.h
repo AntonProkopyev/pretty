@@ -142,6 +142,7 @@ struct Composer {
     stl::IntrusiveList fontIncListeners;
     stl::IntrusiveList fontDecListeners;
     stl::IntrusiveList fontResetListeners;
+    stl::IntrusiveList reloadConfigListeners;
     // SessionSet commits its tab model - count, order, active index,
     // labels - and then walks this list; the window chrome projects the
     // model from here.
