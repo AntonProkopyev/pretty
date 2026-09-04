@@ -264,10 +264,28 @@ void PollerLoopImpl::wait(u64 monotonicDeadline) {
         );
     }();
     if (nativeHandle == nullptr) {
-        Sleep(timeoutMilliseconds);
-    } else {
-        const DWORD result = WaitForSingleObject(nativeHandle, timeoutMilliseconds);
+        const DWORD result = MsgWaitForMultipleObjectsEx(
+            0,
+            nullptr,
+            timeoutMilliseconds,
+            QS_ALLINPUT,
+            MWMO_INPUTAVAILABLE
+        );
         STD_INSIST(result == WAIT_OBJECT_0 || result == WAIT_TIMEOUT);
+    } else {
+        HANDLE handle = nativeHandle;
+        const DWORD result = MsgWaitForMultipleObjectsEx(
+            1,
+            &handle,
+            timeoutMilliseconds,
+            QS_ALLINPUT,
+            MWMO_INPUTAVAILABLE
+        );
+        STD_INSIST(
+            result == WAIT_OBJECT_0
+            || result == WAIT_OBJECT_0 + 1
+            || result == WAIT_TIMEOUT
+        );
         if (result == WAIT_OBJECT_0) {
             nativeCallback->ready();
         }

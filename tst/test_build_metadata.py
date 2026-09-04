@@ -505,6 +505,42 @@ class BuildMetadataTests(unittest.TestCase):
             )
             self.assertIn("-DPLT_HEADLESS=1", platform["cmd"][0])
 
+    def test_plt_selects_win32_backend_for_windows_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            compiler = root / "clang"
+            compiler.touch(mode=0o755)
+            environment = os.environ.copy()
+            environment.update({
+                "CC": str(compiler),
+                "CXX": str(compiler),
+            })
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    ROOT / "build",
+                    "--build-file", ROOT / "ext" / "plt" / "build.py",
+                    "--target", "x86_64-w64-windows-gnu",
+                    "--graph",
+                ],
+                env=environment,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            graph = json.loads(result.stdout)
+            sources = {
+                source
+                for node in graph["nodes"]
+                for source in node["inputs"]
+            }
+            self.assertTrue("$(S)/platform_win32.cpp" in sources)
+            self.assertTrue("$(S)/platform_wayland.cpp" not in sources)
+            self.assertTrue("$(S)/platform_cocoa.mm" not in sources)
+            self.assertTrue("$(S)/platform_headless.cpp" in sources)
+
     def test_windows_libstd_graph_excludes_posix_and_test_sources(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
