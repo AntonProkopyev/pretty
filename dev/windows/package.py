@@ -111,6 +111,7 @@ def package(arguments):
     files.update({
         "config/shitty.toml": content(arguments.project_root / "bin/st/shitty.toml"),
         "config/pretty.toml": content(arguments.project_root / "bin/pt/pretty.toml"),
+        "install.ps1": content(arguments.project_root / "dev/windows/install.ps1"),
         "licenses/LICENSE": content(arguments.project_root / "LICENSE"),
         "licenses/LICENSE.MIT": content(arguments.project_root / "LICENSE.MIT"),
         "licenses/LICENSE.GPL3": content(arguments.project_root / "LICENSE.GPL3"),
