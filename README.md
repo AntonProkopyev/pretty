@@ -1,12 +1,16 @@
-# Shitty / Pretty
+# Pretty / Shitty
 
-[![CI](https://github.com/pg83/shitty/actions/workflows/ci.yml/badge.svg)](https://github.com/pg83/shitty/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/pg83/shitty/branch/master/graph/badge.svg)](https://app.codecov.io/gh/pg83/shitty)
-[![release](https://img.shields.io/github/v/release/pg83/shitty)](https://github.com/pg83/shitty/releases/latest)
-[![brew](https://img.shields.io/badge/brew-pg83%2Ftap%2Fshitty-2a6e3f?logo=homebrew)](https://github.com/pg83/homebrew-tap)
+[![CI](https://github.com/AntonProkopyev/pretty/actions/workflows/ci.yml/badge.svg?branch=win64)](https://github.com/AntonProkopyev/pretty/actions/workflows/ci.yml?query=branch%3Awin64)
+[![release](https://img.shields.io/github/v/release/AntonProkopyev/pretty?display_name=tag)](https://github.com/AntonProkopyev/pretty/releases/latest)
+[![upstream](https://img.shields.io/badge/upstream-pg83%2Fshitty-181717?logo=github)](https://github.com/pg83/shitty)
 [![license](https://img.shields.io/badge/license-MIT%20%7C%20GPL--3.0-blue)](LICENSE)
-[![platforms](https://img.shields.io/badge/platforms-Windows%2011%20%7C%20macOS%20%7C%20Linux-8a8a8a)](#requirements)
-[![speed](https://img.shields.io/badge/ascii-118%20MiB%2Fs%20%C2%B7%201.2%C3%97%20alacritty-ffb000)](#performance)
+[![platform](https://img.shields.io/badge/platform-Windows%2011%20x64-0078d4?logo=windows11)](#windows)
+
+Pretty is the native Windows 11 x64 fork of
+[`pg83/shitty`](https://github.com/pg83/shitty). It adds a Win32 frontend,
+Vulkan rendering, DirectWrite font discovery, ConPTY sessions, native tabs,
+and per-user installation.
+[Download the latest Windows ZIP](https://github.com/AntonProkopyev/pretty/releases/latest).
 
 **Blazingly fast. Memory-unsafe and faster than yours.**
 
@@ -400,7 +404,9 @@ the active icon theme.
 
 ### Windows
 
-Extract the release ZIP and install it for the current user:
+Download `pretty-windows-x86_64.zip` from the
+[latest release](https://github.com/AntonProkopyev/pretty/releases/latest).
+Extract the ZIP and install it for the current user:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install.ps1
@@ -484,8 +490,8 @@ the supported profile.
 Windows requires Windows 11 x64 and a Vulkan 1.1 driver. Windows 10, ARM64,
 and x86 are not supported. Win32 IME lifecycle and candidate placement are
 covered, but composition-content automation still needs a host with an
-installed IME. The release has no installer; extract the ZIP and run either
-executable in place.
+installed IME. The release includes a per-user PowerShell installer, but no
+MSI or MSIX package.
 
 ## License transition and authorship
 
