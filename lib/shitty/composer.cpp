@@ -21,6 +21,7 @@
 #include "font_resolver.h"
 #include "input_bindings.h"
 #include "font_fontconfig.h"
+#include "font_windows.h"
 
 #include <lib/vterm/vterm.h>
 #include <lib/vterm/vt_host.h>
@@ -94,6 +95,9 @@ Composer::Composer(ObjPool* pool_, Brand& brand_)
     inputBindings->add(InputActions::KillLine, &killLineListeners);
     inputBindings->add(InputActions::EraseWord, &eraseWordListeners);
     if (FontResolver* const resolver = createCoreTextFontResolver(*this)) {
+        fontResolvers.pushBack(resolver);
+    }
+    if (FontResolver* const resolver = createWindowsFontResolver(*this)) {
         fontResolvers.pushBack(resolver);
     }
     if (FontResolver* const resolver = createFontconfigResolver(*this)) {
