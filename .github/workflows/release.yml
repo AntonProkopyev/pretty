@@ -295,6 +295,113 @@ jobs:
           )
           PY
 
+  build-windows:
+    name: Build Windows ZIP
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Windows cross-build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential clang lld llvm make python3 perl pkg-config \
+            cmake ninja-build git curl unzip zip ragel glslang-tools librsvg2-bin \
+            gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix
+
+      - name: Fetch pinned llvm-mingw and vcpkg
+        run: |
+          set -euo pipefail
+          python3 dev/windows/fetch_toolchain.py \
+            --lock dev/windows/toolchain.lock \
+            --platform linux_x86_64 \
+            --output "$RUNNER_TEMP/llvm-mingw"
+          commit="$(python3 -c 'import tomllib; print(tomllib.load(open("dev/windows/toolchain.lock", "rb"))["vcpkg_commit"])')"
+          git init "$RUNNER_TEMP/vcpkg"
+          git -C "$RUNNER_TEMP/vcpkg" fetch --depth 1 https://github.com/microsoft/vcpkg.git "$commit"
+          git -C "$RUNNER_TEMP/vcpkg" checkout --detach FETCH_HEAD
+          "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+          "$RUNNER_TEMP/vcpkg/vcpkg" install \
+            --triplet x64-mingw-dynamic \
+            --x-manifest-root="$GITHUB_WORKSPACE/dev/windows" \
+            --x-install-root="$RUNNER_TEMP/vcpkg-installed"
+
+      - name: Build Windows applications
+        run: |
+          set -euo pipefail
+          toolchain="$RUNNER_TEMP/llvm-mingw"
+          installed="$RUNNER_TEMP/vcpkg-installed"
+          export CC="$toolchain/bin/x86_64-w64-mingw32-clang"
+          export CXX="$toolchain/bin/x86_64-w64-mingw32-clang++"
+          export RC="$toolchain/bin/llvm-rc"
+          export AR="$toolchain/bin/llvm-ar"
+          export PKG_CONFIG_LIBDIR="$installed/x64-mingw-dynamic/lib/pkgconfig:$installed/x64-mingw-dynamic/share/pkgconfig"
+          python3 build --target=x86_64-w64-windows-gnu \
+            -B "$RUNNER_TEMP/windows-app" -j "$(nproc)" st pt
+
+      - name: Assemble deterministic Windows ZIP
+        run: |
+          set -euo pipefail
+          runtime="$RUNNER_TEMP/windows-runtime"
+          installed="$RUNNER_TEMP/vcpkg-installed/x64-mingw-dynamic"
+          toolchain="$RUNNER_TEMP/llvm-mingw"
+          mkdir -p "$runtime" "$RUNNER_TEMP/windows-release"
+          cp -L "$RUNNER_TEMP/windows-app/st.exe" "$runtime/st.exe"
+          cp -L "$RUNNER_TEMP/windows-app/pt.exe" "$runtime/pt.exe"
+          cp "$installed/bin/"*.dll "$runtime/"
+          cp "$toolchain/x86_64-w64-mingw32/bin/libc++.dll" "$runtime/"
+          cp "$toolchain/x86_64-w64-mingw32/bin/libunwind.dll" "$runtime/"
+          cp "$(x86_64-w64-mingw32-g++ -print-file-name=libgcc_s_seh-1.dll)" "$runtime/"
+          cp "$(x86_64-w64-mingw32-g++ -print-file-name=libstdc++-6.dll)" "$runtime/"
+          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+          python3 dev/windows/package.py \
+            --runtime-dir "$runtime" \
+            --project-root "$GITHUB_WORKSPACE" \
+            --vcpkg-share "$installed/share" \
+            --llvm-license "$toolchain/LICENSE.TXT" \
+            --gcc-copyright /usr/share/doc/g++-mingw-w64-x86-64/copyright \
+            --objdump "$toolchain/bin/llvm-objdump" \
+            --output "$RUNNER_TEMP/windows-release/shitty-windows-x86_64.zip"
+
+      - name: Upload Windows ZIP
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-x86_64-release
+          path: ${{ runner.temp }}/windows-release/shitty-windows-x86_64.zip
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  test-windows:
+    name: Test Windows ZIP proxy
+    needs: build-windows
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - name: Download Windows ZIP
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: windows-x86_64-release
+          path: ${{ runner.temp }}/windows-release
+
+      - name: Run clean-path package smoke
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP "windows-smoke"
+          Expand-Archive \
+            (Join-Path $env:RUNNER_TEMP "windows-release\shitty-windows-x86_64.zip") \
+            $root
+          $app = Join-Path $root "shitty-windows-x86_64"
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          $version = Start-Process (Join-Path $app "st.exe") -ArgumentList @("-v") -WorkingDirectory $app -Wait -PassThru
+          $st = Start-Process (Join-Path $app "st.exe") -ArgumentList @("-config", ".\config\shitty.toml", "-e", "cmd.exe", "/D", "/Q", "/C", '"exit /b 21"') -WorkingDirectory $app -Wait -PassThru
+          $pt = Start-Process (Join-Path $app "pt.exe") -ArgumentList @("-config", ".\config\pretty.toml", "-e", "cmd.exe", "/D", "/Q", "/C", '"exit /b 22"') -WorkingDirectory $app -Wait -PassThru
+          if ($version.ExitCode -ne 0 -or $st.ExitCode -ne 21 -or $pt.ExitCode -ne 22) {
+            throw "Windows package proxy exits version=$($version.ExitCode) st=$($st.ExitCode) pt=$($pt.ExitCode)"
+          }
+
   package-release:
     name: Package and publish release
     needs:
@@ -304,6 +411,8 @@ jobs:
       - test-linux-ubuntu
       - build-darwin
       - test-darwin
+      - build-windows
+      - test-windows
     runs-on: ubuntu-26.04
     steps:
       - name: Check out source
@@ -323,6 +432,12 @@ jobs:
           name: darwin-arm64
           path: ${{ runner.temp }}/release-input/darwin-arm64
 
+      - name: Download Windows ZIP
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: windows-x86_64-release
+          path: ${{ runner.temp }}/release-input/windows-x86_64
+
       - name: Let the release push tags
         run: |
           git config --global user.name "shitty release bot"
@@ -337,14 +452,17 @@ jobs:
             --artifacts-directory "$RUNNER_TEMP/release-artifacts" --draft \
             --tag-file "$RUNNER_TEMP/release-tag" \
             --linux-binaries-directory "$RUNNER_TEMP/release-input/linux-x86_64" \
-            --darwin-binaries-directory "$RUNNER_TEMP/release-input/darwin-arm64"
+            --darwin-binaries-directory "$RUNNER_TEMP/release-input/darwin-arm64" \
+            --extra-artifact "$RUNNER_TEMP/release-input/windows-x86_64/shitty-windows-x86_64.zip"
         env:
           GH_TOKEN: ${{ github.token }}
 
       - name: Attest release artifacts
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
-          subject-path: '${{ runner.temp }}/release-artifacts/*.tar.gz'
+          subject-path: |
+            ${{ runner.temp }}/release-artifacts/*.tar.gz
+            ${{ runner.temp }}/release-input/windows-x86_64/*.zip
 
       - name: Publish release
         run: gh release edit "$(cat "$RUNNER_TEMP/release-tag")" --draft=false --repo "$GITHUB_REPOSITORY"

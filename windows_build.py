@@ -43,6 +43,7 @@ windows_headless_test = program(
 )
 
 group("windows-headless-test", windows_headless_test)
+group("windows-test", windows_headless_test)
 
 windows_win32_test = program(
     srcs=["$(S)/dev/windows/win32_test.cpp"],
@@ -61,6 +62,7 @@ windows_win32_test = program(
 )
 
 group("windows-win32-test", windows_win32_test)
+group("windows-test", windows_win32_test)
 
 vcpkg_installed = os.environ.get("VCPKG_INSTALLED")
 if vcpkg_installed:
@@ -191,6 +193,10 @@ if vcpkg_installed:
     group("windows-vulkan-test", windows_vulkan_test)
     group("windows-font-test", windows_font_backend_probe)
     group("windows-font-test", windows_font_test)
+    group("windows-test", windows_renderer_probe)
+    group("windows-test", windows_vulkan_test)
+    group("windows-test", windows_font_backend_probe)
+    group("windows-test", windows_font_test)
 
 windows_conpty_test = program(
     srcs=["$(S)/dev/windows/conpty_test.cpp"],
@@ -214,3 +220,5 @@ windows_pty_backend_probe = library(
 
 group("windows-conpty-test", windows_pty_backend_probe)
 group("windows-conpty-test", windows_conpty_test)
+group("windows-test", windows_pty_backend_probe)
+group("windows-test", windows_conpty_test)

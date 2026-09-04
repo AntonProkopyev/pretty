@@ -26,6 +26,8 @@
     #define NOMINMAX
     #include <windows.h>
     #include <shellapi.h>
+    #include <shlobj.h>
+    #include <cstdio>
     #include <string>
     #include <vector>
 #endif
@@ -171,6 +173,48 @@ int runMain(Brand& brand, int argc, char* argv[]) {
 }
 
 #if defined(_WIN32)
+namespace {
+    bool diagnosticArguments(const std::vector<std::string>& arguments) {
+        if (arguments.size() < 2) {
+            return false;
+        }
+        const std::string& option = arguments[1];
+        return option == "-v" || option == "-version"
+            || option == "-help" || option == "-listres";
+    }
+
+    bool redirectWindowsDiagnostics(Brand& brand, bool attachParent) {
+        if (attachParent) {
+            AttachConsole(ATTACH_PARENT_PROCESS);
+            if (GetFileType(GetStdHandle(STD_OUTPUT_HANDLE)) != FILE_TYPE_CHAR) {
+                FreeConsole();
+                AllocConsole();
+            }
+            return _wfreopen(L"CONOUT$", L"w", stdout) != nullptr
+                && _wfreopen(L"CONOUT$", L"w", stderr) != nullptr;
+        }
+        PWSTR root = nullptr;
+        if (FAILED(SHGetKnownFolderPath(
+                FOLDERID_LocalAppData,
+                KF_FLAG_DEFAULT,
+                nullptr,
+                &root
+            ))) {
+            return false;
+        }
+        std::wstring directory(root);
+        CoTaskMemFree(root);
+        directory += L"\\";
+        for (const u8 byte : brand.identifier()) {
+            directory.push_back(static_cast<wchar_t>(byte));
+        }
+        CreateDirectoryW(directory.c_str(), nullptr);
+        const std::wstring log = directory + L"\\startup.log";
+        return _wfreopen(log.c_str(), L"w", stdout) != nullptr
+            && _wfreopen(log.c_str(), L"w", stderr) != nullptr;
+    }
+}
+
 int runWindowsMain(Brand& brand) {
     int count = 0;
     wchar_t** const wideArguments = CommandLineToArgvW(GetCommandLineW(), &count);
@@ -208,9 +252,21 @@ int runWindowsMain(Brand& brand) {
             LocalFree(wideArguments);
             return 1;
         }
+        encoded[index].pop_back();
         arguments[index] = encoded[index].data();
     }
     LocalFree(wideArguments);
+    redirectWindowsDiagnostics(brand, diagnosticArguments(encoded));
+    if (encoded.size() > 1
+            && (encoded[1] == "-v" || encoded[1] == "-version")) {
+        const StringView name = brand.displayName();
+        std::fwrite(name.data(), 1, name.length(), stdout);
+        std::fprintf(stdout, " %s\nCopyright (C) 2026 ", SHITTY_VERSION);
+        std::fwrite(name.data(), 1, name.length(), stdout);
+        std::fputs(" team\n", stdout);
+        std::fflush(stdout);
+        return 0;
+    }
     return runMain(brand, count, arguments.data());
 }
 #endif

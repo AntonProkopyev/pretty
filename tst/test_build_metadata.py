@@ -576,8 +576,6 @@ class BuildMetadataTests(unittest.TestCase):
             forbidden = (
                 "$(S)/std/dns/",
                 "$(S)/std/net/",
-                "$(S)/std/ios/in_fd",
-                "$(S)/std/ios/out_fd",
                 "$(S)/std/ios/stream_tcp",
                 "$(S)/std/sys/event_fd.cpp",
                 "$(S)/std/sys/mem_fd.cpp",
@@ -589,6 +587,8 @@ class BuildMetadataTests(unittest.TestCase):
             )
 
             self.assertTrue("$(S)/std/ios/output.cpp" in sources)
+            self.assertTrue("$(S)/std/ios/in_fd.cpp" in sources)
+            self.assertTrue("$(S)/std/ios/out_fd.cpp" in sources)
             self.assertTrue(all(not source.endswith("_ut.cpp") for source in sources))
             for prefix in forbidden:
                 with self.subTest(prefix=prefix):

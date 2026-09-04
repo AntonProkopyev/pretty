@@ -291,6 +291,10 @@ namespace {
 }
 
 int main() {
+    if (GetFileType(GetStdHandle(STD_OUTPUT_HANDLE)) != FILE_TYPE_CHAR) {
+        FreeConsole();
+        AllocConsole();
+    }
     const SessionResult unicode = execute(
         commandPrompt(
             L"chcp 65001>nul & set /p line= & echo OUT:!line! & exit /b 7"
