@@ -94,6 +94,11 @@ namespace {
         {InputActions::PrevTab, {InputKey::Printable, InputControl | InputShift, '{'}},
         {InputActions::NextTab, {InputKey::Printable, InputControl | InputShift, ']'}},
         {InputActions::NextTab, {InputKey::Printable, InputControl | InputShift, '}'}},
+#if defined(_WIN32)
+        {InputActions::NewTab, {InputKey::Printable, InputControl | InputShift, '`', '~'}},
+        {InputActions::PrevTab, {InputKey::PageUp, InputControl}},
+        {InputActions::NextTab, {InputKey::PageDown, InputControl}},
+#endif
         {InputActions::Clear, {InputKey::Printable, InputControl | InputShift, 'l', 'L'}},
 #if defined(_WIN32)
         {InputActions::ReloadConfig, {InputKey::Printable, InputControl | InputShift, 'r', 'R'}},

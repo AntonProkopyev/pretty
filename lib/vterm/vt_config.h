@@ -9,6 +9,7 @@
 #include "color.h"
 #include "ansi_palette.h"
 #include "unicode_width.h"
+#include "terminal_types.h"
 
 #include <std/str/view.h>
 #include <std/sys/types.h>
@@ -32,6 +33,8 @@ struct VtConfig {
     Color cr{};
     Color fg{};
     AnsiPalette palette{};
+    TerminalCursor::Style cursorShape = TerminalCursor::Style::filled_block;
+    u8 cursorStyleParam = 2;
     bool altScrollMode = false;
     bool altSendsEscape = false;
     bool autoCopyMode = false;

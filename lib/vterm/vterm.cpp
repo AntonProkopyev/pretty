@@ -3578,8 +3578,8 @@ void VtermImpl::resetTerminal() {
 void VtermImpl::resetScreen(bool resetTabStops) {
     utf8dec.reset();
     showCursorMode = true;
-    cursorShape = TerminalCursor::Style::filled_block;
-    cursorStyleParam = 2;
+    cursorShape = config().cursorShape;
+    cursorStyleParam = config().cursorStyleParam;
     cursorBlinkMode = false;
     haveBlinkingText = false;
     blinkVisible = true;
@@ -8921,6 +8921,8 @@ VtermImpl::VtermImpl(ObjPool& owner, VtGeometry& geometry_, const VtConfigSlot& 
         special = config().fg;
     }
     cursorColor = config().cr;
+    cursorShape = config().cursorShape;
+    cursorStyleParam = config().cursorStyleParam;
     selectionFgColor = config().fg;
     selectionBgColor = config().bg;
     initialModifyKeyResources[0] = 0;
@@ -8958,6 +8960,8 @@ void VtermImpl::configChanged() {
         colors.originalSpecial[index] = config().fg;
     }
     cursorColor = config().cr;
+    cursorShape = config().cursorShape;
+    cursorStyleParam = config().cursorStyleParam;
     selectionFgColor = config().fg;
     selectionBgColor = config().bg;
     selectionColorMask = 0;

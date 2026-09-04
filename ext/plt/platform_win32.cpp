@@ -34,6 +34,8 @@ namespace {
     constexpr wchar_t windowClassName[] = L"Shitty.Platform.Win32";
     constexpr wchar_t dropTargetProperty[] = L"Shitty.Win32.DropTarget";
     constexpr UINT_PTR frameTimerId = 1;
+    constexpr UINT chromePaintMessage = WM_APP + 1;
+    constexpr int globalToggleHotkeyId = 0x5348;
     constexpr UINT frameDelayMilliseconds = 8;
     constexpr ULONGLONG attentionIntervalMilliseconds = 1000;
     const StringView utf8Mime(u8"text/plain;charset=utf-8");
@@ -725,8 +727,15 @@ namespace {
 
         WindowWin32& initialize(const WindowOptions& options);
         WindowWin32& attach(HWND window);
+        RECT outerRect(u32 width, u32 height, UINT dpi) const;
+        UINT dpi() const;
+        LONG frameHeight() const;
+        LONG captionHeight() const;
+        LRESULT hitTest(LPARAM position) const;
+        void paintChrome(HDC dc) const;
+        bool chromeClick(LPARAM position);
         bool revokeDrop() noexcept;
-        LRESULT message(UINT message, WPARAM wparam, LPARAM lparam);
+        LRESULT message(HWND source, UINT message, WPARAM wparam, LPARAM lparam);
         WindowInfo refreshInfo();
         u16 updateModifiers(InputKey key, bool pressed);
         u16 currentModifiers() const;
@@ -756,6 +765,8 @@ namespace {
         void requestPointerIcon(PointerIcon icon) override;
         void requestOpenUri(StringView uri) override;
         void requestTextInputRect(i32 x, i32 y, u32 width, u32 height) override;
+        void requestTabs(WindowTabs* tabs_) override;
+        void requestTabsRedraw() override;
         WindowInfo info() const override;
         bool inLiveResize() const override;
         RenderContext renderContext() const override;
@@ -767,8 +778,11 @@ namespace {
         WindowEvents* events;
         FrameCallback* frame;
         DropTarget* drop;
+        WindowTabs* tabs = nullptr;
         IDropTarget* oleDropTarget = nullptr;
         HWND handle = nullptr;
+        HWND chrome = nullptr;
+        HWND surface = nullptr;
         WindowInfo info_;
         WINDOWPLACEMENT placement{};
         RECT restoredRect{};
@@ -783,6 +797,8 @@ namespace {
         bool restoredMaximized = false;
         bool pointerInside = false;
         bool frameTimerArmed = false;
+        bool customFrame = false;
+        bool globalHotkeyRegistered = false;
         ULONGLONG lastAttention = 0;
         u16 modifiers = 0;
         u8 shiftKeys = 0;
@@ -858,7 +874,7 @@ bool WindowWin32::revokeDrop() noexcept {
     if (oleDropTarget == nullptr) {
         return false;
     }
-    RevokeDragDrop(handle);
+    RevokeDragDrop(surface == nullptr ? handle : surface);
     RemovePropW(handle, dropTargetProperty);
     oleDropTarget->Release();
     oleDropTarget = nullptr;
@@ -866,12 +882,19 @@ bool WindowWin32::revokeDrop() noexcept {
 }
 
 WindowWin32& WindowWin32::attach(HWND window) {
-    STD_INSIST(handle == nullptr);
-    handle = window;
+    if (handle == nullptr) {
+        handle = window;
+    } else if (chrome == nullptr) {
+        chrome = window;
+    } else {
+        STD_INSIST(surface == nullptr);
+        surface = window;
+    }
     return *this;
 }
 
 WindowWin32& WindowWin32::initialize(const WindowOptions& options) {
+    customFrame = options.decorations;
     minimumWidth = std::max(1u, options.minimumWidth);
     minimumHeight = std::max(1u, options.minimumHeight);
     if ((GetKeyState(VK_CAPITAL) & 1) != 0) {
@@ -883,13 +906,15 @@ WindowWin32& WindowWin32::initialize(const WindowOptions& options) {
     const DWORD style = options.decorations
         ? WS_OVERLAPPEDWINDOW
         : WS_POPUP | WS_THICKFRAME;
-    const RECT outer = adjustedClientRect(
-        style,
-        0,
-        std::max(1u, options.width),
-        std::max(1u, options.height),
-        GetDpiForSystem()
-    );
+    const u32 width = std::max(1u, options.width);
+    const u32 height = std::max(1u, options.height);
+    const UINT dpi = GetDpiForSystem();
+    const LONG chromeHeight = GetSystemMetricsForDpi(SM_CYSIZEFRAME, dpi)
+        + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi)
+        + GetSystemMetricsForDpi(SM_CYCAPTION, dpi);
+    const RECT outer = customFrame
+        ? RECT{0, 0, static_cast<LONG>(width), static_cast<LONG>(height) + chromeHeight}
+        : adjustedClientRect(style, 0, width, height, dpi);
     const std::wstring title = wide(options.title);
     const HWND window = CreateWindowExW(
         0,
@@ -907,6 +932,52 @@ WindowWin32& WindowWin32::initialize(const WindowOptions& options) {
     );
     STD_INSIST(window != nullptr);
     STD_INSIST(handle == window);
+    RECT client{};
+    STD_INSIST(GetClientRect(handle, &client) != 0);
+    const HWND chromeWindow = CreateWindowExW(
+        0, windowClassName, L"", WS_CHILD | WS_VISIBLE,
+        0, 0, client.right, chromeHeight,
+        handle, nullptr, platform.instance_, this
+    );
+    STD_INSIST(chromeWindow != nullptr && chrome == chromeWindow);
+    const HWND renderSurface = CreateWindowExW(
+        0,
+        windowClassName,
+        L"",
+        WS_CHILD | WS_VISIBLE,
+        0,
+        chromeHeight,
+        client.right,
+        std::max<LONG>(1, client.bottom - chromeHeight),
+        handle,
+        nullptr,
+        platform.instance_,
+        this
+    );
+    STD_INSIST(renderSurface != nullptr && surface == renderSurface);
+    if (options.globalToggleHotkey) {
+        globalHotkeyRegistered = RegisterHotKey(
+            handle,
+            globalToggleHotkeyId,
+            MOD_CONTROL | MOD_NOREPEAT,
+            VK_OEM_3
+        ) != 0;
+        if (!globalHotkeyRegistered) {
+            OutputDebugStringW(L"shitty: cannot register Ctrl+` global hotkey\n");
+        }
+    }
+    if (customFrame) {
+        STD_INSIST(SetWindowPos(
+            handle,
+            nullptr,
+            0,
+            0,
+            0,
+            0,
+            SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE
+                | SWP_NOACTIVATE | SWP_NOZORDER
+        ) != 0);
+    }
     if (drop != nullptr) {
         oleDropTarget = platform.allocator_.make<Win32DropTarget>(
             platform.allocator_,
@@ -918,10 +989,219 @@ WindowWin32& WindowWin32::initialize(const WindowOptions& options) {
             dropTargetProperty,
             oleDropTarget
         ) != 0);
-        STD_INSIST(RegisterDragDrop(handle, oleDropTarget) == S_OK);
+        STD_INSIST(RegisterDragDrop(surface, oleDropTarget) == S_OK);
     }
     refreshInfo();
     return *this;
+}
+
+RECT WindowWin32::outerRect(u32 width, u32 height, UINT dpi) const {
+    if (customFrame) {
+        const LONG chromeHeight = GetSystemMetricsForDpi(SM_CYSIZEFRAME, dpi)
+            + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi)
+            + GetSystemMetricsForDpi(SM_CYCAPTION, dpi);
+        return {
+            .left = 0,
+            .top = 0,
+            .right = static_cast<LONG>(width),
+            .bottom = static_cast<LONG>(height) + chromeHeight,
+        };
+    }
+    return adjustedClientRect(
+        GetWindowLongPtrW(handle, GWL_STYLE),
+        GetWindowLongPtrW(handle, GWL_EXSTYLE),
+        width,
+        height,
+        dpi
+    );
+}
+
+UINT WindowWin32::dpi() const {
+    const UINT value = GetDpiForWindow(handle);
+    return value == 0 ? 96 : value;
+}
+
+LONG WindowWin32::frameHeight() const {
+    return GetSystemMetricsForDpi(SM_CYSIZEFRAME, dpi())
+        + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi());
+}
+
+LONG WindowWin32::captionHeight() const {
+    return frameHeight()
+        + GetSystemMetricsForDpi(SM_CYCAPTION, dpi());
+}
+
+LRESULT WindowWin32::hitTest(LPARAM position) const {
+    if (info_.fullscreen) {
+        return HTCLIENT;
+    }
+    RECT bounds{};
+    if (GetWindowRect(handle, &bounds) == 0) {
+        return HTNOWHERE;
+    }
+    const POINT point = {
+        .x = static_cast<short>(LOWORD(position)),
+        .y = static_cast<short>(HIWORD(position)),
+    };
+    const LONG frame = frameHeight();
+    const bool left = point.x < bounds.left + frame;
+    const bool right = point.x >= bounds.right - frame;
+    const bool top = point.y < bounds.top + frame;
+    const bool bottom = point.y >= bounds.bottom - frame;
+    if (IsZoomed(handle) == 0) {
+        if (top && left) return HTTOPLEFT;
+        if (top && right) return HTTOPRIGHT;
+        if (bottom && left) return HTBOTTOMLEFT;
+        if (bottom && right) return HTBOTTOMRIGHT;
+        if (left) return HTLEFT;
+        if (right) return HTRIGHT;
+        if (top) return HTTOP;
+        if (bottom) return HTBOTTOM;
+    }
+    if (point.y < bounds.top + captionHeight()) {
+        const LONG button = std::max<LONG>(46, MulDiv(46, static_cast<int>(dpi()), 96));
+        if (point.x >= bounds.right - button) return HTCLOSE;
+        if (point.x >= bounds.right - 2 * button) return HTMAXBUTTON;
+        if (point.x >= bounds.right - 3 * button) return HTMINBUTTON;
+    }
+    return point.y < bounds.top + captionHeight() ? HTCAPTION : HTCLIENT;
+}
+
+void WindowWin32::paintChrome(HDC dc) const {
+    if (!customFrame || handle == nullptr) {
+        return;
+    }
+    RECT bounds{};
+    if (chrome == nullptr || GetClipBox(dc, &bounds) == ERROR) {
+        return;
+    }
+    const LONG width = bounds.right - bounds.left;
+    const LONG height = bounds.bottom - bounds.top;
+    const WindowColor background = tabs == nullptr
+        ? WindowColor{38, 50, 56}
+        : tabs->background();
+    const WindowColor foreground = tabs == nullptr
+        ? WindowColor{236, 239, 241}
+        : tabs->foreground();
+    const COLORREF bg = RGB(background.red, background.green, background.blue);
+    const COLORREF fg = RGB(foreground.red, foreground.green, foreground.blue);
+    const HBRUSH backgroundBrush = CreateSolidBrush(bg);
+    RECT bar{0, 0, width, height};
+    FillRect(dc, &bar, backgroundBrush);
+    DeleteObject(backgroundBrush);
+    SetBkMode(dc, TRANSPARENT);
+    SetTextColor(dc, fg);
+    const int fontHeight = -MulDiv(12, static_cast<int>(dpi()), 72);
+    const HFONT font = CreateFontW(
+        fontHeight, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+        CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI"
+    );
+    const HGDIOBJ previousFont = SelectObject(dc, font);
+    const LONG button = std::max<LONG>(46, MulDiv(46, static_cast<int>(dpi()), 96));
+    const LONG controlsLeft = width - 3 * button;
+    if (tabs != nullptr && tabs->count() != 0 && controlsLeft > 48) {
+        constexpr LONG left = 8;
+        const LONG plus = std::max<LONG>(34, MulDiv(34, static_cast<int>(dpi()), 96));
+        const LONG tabsRight = controlsLeft - plus;
+        const size_t count = tabs->count();
+        const LONG cellWidth = std::max<LONG>(1, (tabsRight - left) / static_cast<LONG>(count));
+        const HBRUSH activeBrush = CreateSolidBrush(RGB(
+            std::min<int>(255, background.red + 16),
+            std::min<int>(255, background.green + 16),
+            std::min<int>(255, background.blue + 16)
+        ));
+        for (size_t at = 0; at != count; ++at) {
+            RECT cell{
+                left + static_cast<LONG>(at) * cellWidth,
+                frameHeight(),
+                at + 1 == count ? tabsRight : left + static_cast<LONG>(at + 1) * cellWidth,
+                height,
+            };
+            if (at == tabs->active()) {
+                FillRect(dc, &cell, activeBrush);
+            }
+            RECT label = cell;
+            label.left += 10;
+            label.right -= 24;
+            const std::wstring text = wide(tabs->title(at));
+            DrawTextW(dc, text.c_str(), static_cast<int>(text.length()), &label, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            RECT close = cell;
+            close.left = close.right - 24;
+            DrawTextW(dc, L"×", 1, &close, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        }
+        DeleteObject(activeBrush);
+        RECT add{tabsRight, frameHeight(), controlsLeft, height};
+        DrawTextW(dc, L"+", 1, &add, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
+    const HBRUSH controlBrush = CreateSolidBrush(fg);
+    const LONG middle = height / 2;
+    const LONG minimize = controlsLeft + button / 2;
+    RECT stroke{minimize - 6, middle + 4, minimize + 6, middle + 5};
+    FillRect(dc, &stroke, controlBrush);
+    const LONG maximize = controlsLeft + button + button / 2;
+    RECT top{maximize - 6, middle - 6, maximize + 6, middle - 5};
+    RECT bottom{maximize - 6, middle + 5, maximize + 6, middle + 6};
+    RECT left{maximize - 6, middle - 6, maximize - 5, middle + 6};
+    RECT right{maximize + 5, middle - 6, maximize + 6, middle + 6};
+    FillRect(dc, &top, controlBrush);
+    FillRect(dc, &bottom, controlBrush);
+    FillRect(dc, &left, controlBrush);
+    FillRect(dc, &right, controlBrush);
+    const LONG close = controlsLeft + 2 * button + button / 2;
+    for (LONG offset = -5; offset <= 5; ++offset) {
+        RECT descending{close + offset, middle + offset, close + offset + 2, middle + offset + 2};
+        RECT ascending{close + offset, middle - offset, close + offset + 2, middle - offset + 2};
+        FillRect(dc, &descending, controlBrush);
+        FillRect(dc, &ascending, controlBrush);
+    }
+    DeleteObject(controlBrush);
+    SelectObject(dc, previousFont);
+    DeleteObject(font);
+}
+
+bool WindowWin32::chromeClick(LPARAM position) {
+    RECT bounds{};
+    STD_INSIST(chrome != nullptr && GetWindowRect(chrome, &bounds) != 0);
+    const LONG x = static_cast<short>(LOWORD(position)) - bounds.left;
+    const LONG width = bounds.right - bounds.left;
+    const LONG button = std::max<LONG>(46, MulDiv(46, static_cast<int>(dpi()), 96));
+    const LONG controlsLeft = width - 3 * button;
+    if (x >= controlsLeft && x < width) {
+        if (x >= width - button) {
+            requestClose();
+        } else if (x >= width - 2 * button) {
+            requestMaximized(IsZoomed(handle) == 0);
+        } else {
+            requestIconify();
+        }
+        return true;
+    }
+    if (tabs == nullptr || tabs->count() == 0) {
+        return false;
+    }
+    const LONG plus = std::max<LONG>(34, MulDiv(34, static_cast<int>(dpi()), 96));
+    const LONG tabsRight = controlsLeft - plus;
+    constexpr LONG left = 8;
+    if (x < left) {
+        return false;
+    }
+    if (x >= tabsRight) {
+        tabs->open();
+        return true;
+    }
+    const size_t count = tabs->count();
+    const LONG cellWidth = std::max<LONG>(1, (tabsRight - left) / static_cast<LONG>(count));
+    const size_t index = std::min<size_t>(count - 1, static_cast<size_t>((x - left) / cellWidth));
+    const LONG cellRight = index + 1 == count
+        ? tabsRight
+        : left + static_cast<LONG>(index + 1) * cellWidth;
+    if (x >= cellRight - 24) {
+        tabs->close(index);
+    } else {
+        tabs->select(index);
+    }
+    return true;
 }
 
 WindowInfo WindowWin32::refreshInfo() {
@@ -930,7 +1210,7 @@ WindowInfo WindowWin32::refreshInfo() {
     }
     RECT client;
     RECT outer;
-    STD_INSIST(GetClientRect(handle, &client) != 0);
+    STD_INSIST(GetClientRect(surface == nullptr ? handle : surface, &client) != 0);
     STD_INSIST(GetWindowRect(handle, &outer) != 0);
     info_.x = outer.left;
     info_.y = outer.top;
@@ -948,8 +1228,8 @@ WindowInfo WindowWin32::refreshInfo() {
     info_.screenPixelHeight = static_cast<u32>(
         monitor.rcMonitor.bottom - monitor.rcMonitor.top
     );
-    info_.contentScale = static_cast<float>(GetDpiForWindow(handle)) / 96.0f;
-    info_.focused = GetFocus() == handle;
+    info_.contentScale = static_cast<float>(dpi()) / 96.0f;
+    info_.focused = GetFocus() == (surface == nullptr ? handle : surface);
     info_.iconified = IsIconic(handle) != 0;
     info_.maximized = IsZoomed(handle) != 0;
     return info_;
@@ -1036,7 +1316,13 @@ LRESULT WindowWin32::keyMessage(WPARAM wparam, LPARAM lparam) {
             ? layoutCodepoint(wparam, lparam, true)
             : 0,
     });
-    input->flush();
+    const bool textExpected = !released
+        && (key == InputKey::Printable || key == InputKey::Space)
+        && (((flags & (InputControl | InputSuper)) == 0)
+            || (flags & InputAltGraph) != 0);
+    if (!textExpected) {
+        input->flush();
+    }
     return 0;
 }
 
@@ -1044,7 +1330,15 @@ LRESULT WindowWin32::textMessage(WPARAM wparam) {
     if (input == nullptr) {
         return 0;
     }
+    const u16 flags = currentModifiers();
+    if ((flags & (InputControl | InputSuper)) != 0
+            && (flags & InputAltGraph) == 0) {
+        return 0;
+    }
     const wchar_t unit = static_cast<wchar_t>(wparam);
+    if (unit < 0x20 || unit == 0x7f) {
+        return 0;
+    }
     if (unit >= 0xd800 && unit <= 0xdbff) {
         if (highSurrogate != 0) {
             input->text({.codepoint = 0xfffd, .modifiers = currentModifiers()});
@@ -1066,16 +1360,17 @@ LRESULT WindowWin32::textMessage(WPARAM wparam) {
         input->text({.codepoint = 0xfffd, .modifiers = currentModifiers()});
         highSurrogate = 0;
     }
-    input->text({.codepoint = codepoint, .modifiers = currentModifiers()});
+    input->text({.codepoint = codepoint, .modifiers = flags});
     input->flush();
     return 0;
 }
 
 LRESULT WindowWin32::imeComposition(LPARAM lparam) {
-    const HIMC context = ImmGetContext(handle);
+    const HWND inputWindow = surface == nullptr ? handle : surface;
+    const HIMC context = ImmGetContext(inputWindow);
     if (context == nullptr || input == nullptr) {
         if (context != nullptr) {
-            ImmReleaseContext(handle, context);
+            ImmReleaseContext(inputWindow, context);
         }
         return 0;
     }
@@ -1122,7 +1417,7 @@ LRESULT WindowWin32::imeComposition(LPARAM lparam) {
             input->flush();
         }
     }
-    ImmReleaseContext(handle, context);
+    ImmReleaseContext(inputWindow, context);
     return 0;
 }
 
@@ -1134,7 +1429,7 @@ LRESULT WindowWin32::pointerMotionMessage(LPARAM lparam) {
         TRACKMOUSEEVENT tracking = {
             .cbSize = sizeof(TRACKMOUSEEVENT),
             .dwFlags = TME_LEAVE,
-            .hwndTrack = handle,
+            .hwndTrack = surface == nullptr ? handle : surface,
             .dwHoverTime = 0,
         };
         STD_INSIST(TrackMouseEvent(&tracking) != 0);
@@ -1200,7 +1495,7 @@ LRESULT WindowWin32::scrollMessage(UINT message_, WPARAM wparam, LPARAM lparam) 
         .x = static_cast<short>(LOWORD(lparam)),
         .y = static_cast<short>(HIWORD(lparam)),
     };
-    ScreenToClient(handle, &point);
+    ScreenToClient(surface == nullptr ? handle : surface, &point);
     const double delta = static_cast<short>(HIWORD(wparam))
         / static_cast<double>(WHEEL_DELTA);
     input->scroll({
@@ -1215,8 +1510,50 @@ LRESULT WindowWin32::scrollMessage(UINT message_, WPARAM wparam, LPARAM lparam) 
     return 0;
 }
 
-LRESULT WindowWin32::message(UINT message_, WPARAM wparam, LPARAM lparam) {
+LRESULT WindowWin32::message(HWND source, UINT message_, WPARAM wparam, LPARAM lparam) {
     switch (message_) {
+    case chromePaintMessage:
+        if (source == chrome) {
+            InvalidateRect(chrome, nullptr, FALSE);
+            UpdateWindow(chrome);
+        }
+        return 0;
+    case WM_NCCALCSIZE:
+        return source == handle && customFrame
+            ? 0
+            : DefWindowProcW(source, message_, wparam, lparam);
+    case WM_NCHITTEST:
+        if (customFrame) {
+            const LRESULT result = hitTest(lparam);
+            if (source == handle
+                    || result == HTLEFT || result == HTRIGHT
+                    || result == HTTOP || result == HTBOTTOM
+                    || result == HTTOPLEFT || result == HTTOPRIGHT
+                    || result == HTBOTTOMLEFT || result == HTBOTTOMRIGHT) {
+                return result;
+            }
+        }
+        return DefWindowProcW(source, message_, wparam, lparam);
+    case WM_NCPAINT:
+        return DefWindowProcW(source, message_, wparam, lparam);
+    case WM_NCACTIVATE:
+        if (source == handle) {
+            InvalidateRect(handle, nullptr, FALSE);
+            return TRUE;
+        }
+        return DefWindowProcW(source, message_, wparam, lparam);
+    case WM_NCLBUTTONDOWN:
+        if (source != handle
+                && (wparam == HTLEFT || wparam == HTRIGHT
+                    || wparam == HTTOP || wparam == HTBOTTOM
+                    || wparam == HTTOPLEFT || wparam == HTTOPRIGHT
+                    || wparam == HTBOTTOMLEFT || wparam == HTBOTTOMRIGHT)) {
+            return SendMessageW(handle, message_, wparam, lparam);
+        }
+        if (source == handle && chromeClick(lparam)) {
+            return 0;
+        }
+        return DefWindowProcW(source, message_, wparam, lparam);
     case WM_CLOSE:
         if (events != nullptr) {
             events->close();
@@ -1224,7 +1561,34 @@ LRESULT WindowWin32::message(UINT message_, WPARAM wparam, LPARAM lparam) {
             DestroyWindow(handle);
         }
         return 0;
+    case WM_HOTKEY:
+        if (wparam != globalToggleHotkeyId) {
+            return DefWindowProcW(source, message_, wparam, lparam);
+        }
+        if (IsWindowVisible(handle) != 0) {
+            ShowWindow(handle, SW_HIDE);
+        } else {
+            ShowWindow(handle, IsIconic(handle) != 0 ? SW_RESTORE : SW_SHOW);
+            SetForegroundWindow(handle);
+            SetFocus(surface == nullptr ? handle : surface);
+            refreshInfo();
+            requestFrame();
+        }
+        return 0;
     case WM_NCDESTROY:
+        if (source != handle) {
+            SetWindowLongPtrW(source, GWLP_USERDATA, 0);
+            if (source == chrome) {
+                chrome = nullptr;
+            } else if (source == surface) {
+                surface = nullptr;
+            }
+            return DefWindowProcW(source, message_, wparam, lparam);
+        }
+        if (globalHotkeyRegistered) {
+            UnregisterHotKey(handle, globalToggleHotkeyId);
+            globalHotkeyRegistered = false;
+        }
         revokeDrop();
         SetWindowLongPtrW(handle, GWLP_USERDATA, 0);
         {
@@ -1234,7 +1598,15 @@ LRESULT WindowWin32::message(UINT message_, WPARAM wparam, LPARAM lparam) {
         }
     case WM_MOVE:
     case WM_SIZE:
+        if (source == handle && surface != nullptr) {
+            RECT client{};
+            if (GetClientRect(handle, &client) != 0) {
+                MoveWindow(chrome, 0, 0, client.right, captionHeight(), TRUE);
+                MoveWindow(surface, 0, captionHeight(), client.right, std::max<LONG>(1, client.bottom - captionHeight()), TRUE);
+            }
+        }
         refreshInfo();
+        requestTabsRedraw();
         return 0;
     case WM_SETFOCUS:
         refreshInfo();
@@ -1266,6 +1638,9 @@ LRESULT WindowWin32::message(UINT message_, WPARAM wparam, LPARAM lparam) {
         return textMessage(wparam);
     case WM_DEADCHAR:
     case WM_SYSDEADCHAR:
+        if (input != nullptr) {
+            input->flush();
+        }
         return 0;
     case WM_UNICHAR:
         if (wparam == UNICODE_NOCHAR) {
@@ -1289,8 +1664,14 @@ LRESULT WindowWin32::message(UINT message_, WPARAM wparam, LPARAM lparam) {
         }
         return 0;
     case WM_MOUSEMOVE:
+        if (source == chrome) {
+            return 0;
+        }
         return pointerMotionMessage(lparam);
     case WM_MOUSELEAVE:
+        if (source == chrome) {
+            return 0;
+        }
         pointerInside = false;
         if (input != nullptr) {
             input->pointerPresence(false);
@@ -1298,7 +1679,24 @@ LRESULT WindowWin32::message(UINT message_, WPARAM wparam, LPARAM lparam) {
         }
         return 0;
     case WM_LBUTTONDOWN:
+        if (source == chrome) {
+            SetFocus(surface);
+            POINT point{
+                static_cast<short>(LOWORD(lparam)),
+                static_cast<short>(HIWORD(lparam)),
+            };
+            ClientToScreen(chrome, &point);
+            const LPARAM screen = MAKELPARAM(static_cast<WORD>(point.x), static_cast<WORD>(point.y));
+            if (!chromeClick(screen)) {
+                ReleaseCapture();
+                SendMessageW(handle, WM_NCLBUTTONDOWN, HTCAPTION, screen);
+            }
+            return 0;
+        }
     case WM_LBUTTONUP:
+        if (source == chrome) {
+            return 0;
+        }
     case WM_RBUTTONDOWN:
     case WM_RBUTTONUP:
     case WM_MBUTTONDOWN:
@@ -1314,7 +1712,7 @@ LRESULT WindowWin32::message(UINT message_, WPARAM wparam, LPARAM lparam) {
             SetCursor(cursor);
             return TRUE;
         }
-        return DefWindowProcW(handle, message_, wparam, lparam);
+        return DefWindowProcW(source, message_, wparam, lparam);
     case WM_ENTERSIZEMOVE:
         liveResize = true;
         return 0;
@@ -1324,12 +1722,10 @@ LRESULT WindowWin32::message(UINT message_, WPARAM wparam, LPARAM lparam) {
         return 0;
     case WM_GETMINMAXINFO: {
         auto& limits = *reinterpret_cast<MINMAXINFO*>(lparam);
-        const RECT minimum = adjustedClientRect(
-            GetWindowLongPtrW(handle, GWL_STYLE),
-            GetWindowLongPtrW(handle, GWL_EXSTYLE),
+        const RECT minimum = outerRect(
             minimumWidth,
             minimumHeight,
-            GetDpiForWindow(handle)
+            dpi()
         );
         limits.ptMinTrackSize.x = minimum.right - minimum.left;
         limits.ptMinTrackSize.y = minimum.bottom - minimum.top;
@@ -1337,12 +1733,10 @@ LRESULT WindowWin32::message(UINT message_, WPARAM wparam, LPARAM lparam) {
     }
     case WM_SIZING: {
         auto& sizing = *reinterpret_cast<RECT*>(lparam);
-        const RECT frame = adjustedClientRect(
-            GetWindowLongPtrW(handle, GWL_STYLE),
-            GetWindowLongPtrW(handle, GWL_EXSTYLE),
+        const RECT frame = outerRect(
             0,
             0,
-            GetDpiForWindow(handle)
+            dpi()
         );
         const LONG frameWidth = frame.right - frame.left;
         const LONG frameHeight = frame.bottom - frame.top;
@@ -1416,23 +1810,31 @@ LRESULT WindowWin32::message(UINT message_, WPARAM wparam, LPARAM lparam) {
         }
         KillTimer(handle, frameTimerId);
         frameTimerArmed = false;
-        STD_INSIST(InvalidateRect(handle, nullptr, FALSE) != 0);
+        STD_INSIST(InvalidateRect(surface == nullptr ? handle : surface, nullptr, FALSE) != 0);
         return 0;
     case WM_PAINT: {
-        if (frameTimerArmed) {
+        if (source != handle && frameTimerArmed) {
             KillTimer(handle, frameTimerId);
             frameTimerArmed = false;
         }
         PAINTSTRUCT paint;
-        BeginPaint(handle, &paint);
-        if (frame != nullptr) {
+        BeginPaint(source, &paint);
+        if (source == chrome) {
+            paintChrome(paint.hdc);
+        } else if (source == surface && frame != nullptr) {
             frame->frame(refreshInfo());
         }
-        EndPaint(handle, &paint);
+        EndPaint(source, &paint);
         return 0;
     }
+    case WM_PRINTCLIENT:
+        if (source == chrome) {
+            paintChrome(reinterpret_cast<HDC>(wparam));
+            return 0;
+        }
+        return DefWindowProcW(source, message_, wparam, lparam);
     default:
-        return DefWindowProcW(handle, message_, wparam, lparam);
+        return DefWindowProcW(source, message_, wparam, lparam);
     }
 }
 
@@ -1453,6 +1855,19 @@ void WindowWin32::requestShow() {
     }
     refreshInfo();
     requestFrame();
+}
+
+void WindowWin32::requestTabs(WindowTabs* tabs_) {
+    tabs = tabs_;
+    requestTabsRedraw();
+}
+
+void WindowWin32::requestTabsRedraw() {
+    if (handle != nullptr && customFrame) {
+        if (chrome != nullptr) {
+            PostMessageW(chrome, chromePaintMessage, 0, 0);
+        }
+    }
 }
 
 void WindowWin32::requestClose() {
@@ -1516,7 +1931,7 @@ void WindowWin32::requestMove(i32 x, i32 y) {
 
 void WindowWin32::requestFocus() {
     SetForegroundWindow(handle);
-    SetFocus(handle);
+    SetFocus(surface == nullptr ? handle : surface);
     refreshInfo();
 }
 
@@ -1578,13 +1993,10 @@ void WindowWin32::requestFullscreen(bool fullscreen) {
 }
 
 void WindowWin32::requestResize(u32 width, u32 height) {
-    const LONG_PTR style = GetWindowLongPtrW(handle, GWL_STYLE);
-    const RECT outer = adjustedClientRect(
-        style,
-        GetWindowLongPtrW(handle, GWL_EXSTYLE),
+    const RECT outer = outerRect(
         std::max(1u, width),
         std::max(1u, height),
-        GetDpiForWindow(handle)
+        dpi()
     );
     STD_INSIST(SetWindowPos(
         handle,
@@ -1695,7 +2107,8 @@ void WindowWin32::requestOpenUri(StringView uri) {
 }
 
 void WindowWin32::requestTextInputRect(i32 x, i32 y, u32, u32 height) {
-    const HIMC context = ImmGetContext(handle);
+    const HWND inputWindow = surface == nullptr ? handle : surface;
+    const HIMC context = ImmGetContext(inputWindow);
     if (context == nullptr) {
         return;
     }
@@ -1712,7 +2125,7 @@ void WindowWin32::requestTextInputRect(i32 x, i32 y, u32, u32 height) {
     candidate.ptCurrentPos = point;
     ImmSetCompositionWindow(context, &composition);
     ImmSetCandidateWindow(context, &candidate);
-    ImmReleaseContext(handle, context);
+    ImmReleaseContext(inputWindow, context);
 }
 
 WindowInfo WindowWin32::info() const {
@@ -1727,7 +2140,7 @@ RenderContext WindowWin32::renderContext() const {
     return {
         .backend = RenderBackend::Win32,
         .connection = platform.instance_,
-        .window = handle,
+        .window = surface == nullptr ? handle : surface,
     };
 }
 
@@ -1800,7 +2213,7 @@ LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM wparam, LPARA
     }
     return target == nullptr
         ? DefWindowProcW(window, message, wparam, lparam)
-        : target->message(message, wparam, lparam);
+        : target->message(window, message, wparam, lparam);
 }
 }
 
@@ -1815,6 +2228,22 @@ Platform* plt::createWin32Platform(ObjPool& owner) {
     description.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC;
     description.lpfnWndProc = windowProcedure;
     description.hInstance = instance;
+    description.hIcon = reinterpret_cast<HICON>(LoadImageW(
+        instance,
+        MAKEINTRESOURCEW(1),
+        IMAGE_ICON,
+        GetSystemMetrics(SM_CXICON),
+        GetSystemMetrics(SM_CYICON),
+        LR_DEFAULTCOLOR | LR_SHARED
+    ));
+    description.hIconSm = reinterpret_cast<HICON>(LoadImageW(
+        instance,
+        MAKEINTRESOURCEW(1),
+        IMAGE_ICON,
+        GetSystemMetrics(SM_CXSMICON),
+        GetSystemMetrics(SM_CYSMICON),
+        LR_DEFAULTCOLOR | LR_SHARED
+    ));
     description.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     description.lpszClassName = windowClassName;
     const ATOM windowClass = RegisterClassExW(&description);

@@ -56,6 +56,8 @@ class WindowsApplicationContractTests(unittest.TestCase):
         self.assertIn("supportedOS", manifest)
         self.assertIn("RT_MANIFEST", resource)
         self.assertIn(" ICON ", resource)
+        self.assertIn("MAKEINTRESOURCEW(1)", (ROOT / "ext/plt/platform_win32.cpp").read_text())
+        self.assertIn("description.hIconSm", (ROOT / "ext/plt/platform_win32.cpp").read_text())
 
     def test_windows_config_file_boundary_uses_utf16(self):
         source = (ROOT / "ext/libstd/std/ios/fs_utils.cpp").read_text()
@@ -70,6 +72,33 @@ class WindowsApplicationContractTests(unittest.TestCase):
         self.assertIn("ReloadConfig", bindings)
         self.assertIn("InputActions::ReloadConfig", application)
         self.assertIn("composer.config->reload()", application)
+
+    def test_windows_decorated_frame_is_client_drawn(self):
+        platform = (ROOT / "ext/plt/platform_win32.cpp").read_text()
+        build = (ROOT / "build.py").read_text()
+        windows_build = (ROOT / "windows_build.py").read_text()
+
+        self.assertIn("WS_CHILD | WS_VISIBLE", platform)
+        self.assertIn("paintChrome", platform)
+        self.assertIn("requestTabs", platform)
+        self.assertIn("case WM_NCCALCSIZE:", platform)
+        self.assertIn("case WM_NCHITTEST:", platform)
+        self.assertIn("HTCAPTION", platform)
+        self.assertIn("HTTOP", platform)
+        self.assertIn('"-lgdi32"', build)
+        self.assertIn('"-lgdi32"', windows_build)
+
+    def test_windows_global_hotkey_toggles_the_window(self):
+        options = (ROOT / "lib/shitty/options.cpp").read_text()
+        application = (ROOT / "lib/shitty/application.cpp").read_text()
+        platform = (ROOT / "ext/plt/platform_win32.cpp").read_text()
+
+        self.assertIn('{"globalHotkey", OptionKind::SepArg', options)
+        self.assertIn(".globalToggleHotkey", application)
+        self.assertIn("RegisterHotKey", platform)
+        self.assertIn("case WM_HOTKEY:", platform)
+        self.assertIn("UnregisterHotKey", platform)
+        self.assertIn("VK_OEM_3", platform)
 
 
 if __name__ == "__main__":

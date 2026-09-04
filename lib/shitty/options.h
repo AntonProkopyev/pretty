@@ -98,6 +98,7 @@ struct Options {
     // fresher application title replaces it.
     bool titleFallbackProcess = false;
     bool optical = false;
+    bool globalHotkey = false;
     bool showWraps = false;
     bool rv = false;
 

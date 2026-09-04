@@ -91,6 +91,23 @@ namespace plt {
         virtual bool frame(const WindowInfo& info) = 0;
     };
 
+    struct WindowColor {
+        u8 red = 0;
+        u8 green = 0;
+        u8 blue = 0;
+    };
+
+    struct WindowTabs {
+        virtual size_t count() const = 0;
+        virtual size_t active() const = 0;
+        virtual stl::StringView title(size_t index) const = 0;
+        virtual WindowColor background() const = 0;
+        virtual WindowColor foreground() const = 0;
+        virtual void select(size_t index) = 0;
+        virtual void close(size_t index) = 0;
+        virtual void open() = 0;
+    };
+
     struct WindowOptions {
         stl::StringView appId = {};
         stl::StringView title = {};
@@ -99,6 +116,7 @@ namespace plt {
         u32 minimumWidth = 1;
         u32 minimumHeight = 1;
         bool decorations = true;
+        bool globalToggleHotkey = false;
         InputSink* input = nullptr;
         WindowEvents* events = nullptr;
         FrameCallback* frame = nullptr;
@@ -149,6 +167,8 @@ namespace plt {
         // candidate window next to it (text-input-v3 cursor rectangle on
         // Wayland, firstRectForCharacterRange on macOS).
         virtual void requestTextInputRect(i32 x, i32 y, u32 width, u32 height) = 0;
+        virtual void requestTabs(WindowTabs*) {}
+        virtual void requestTabsRedraw() {}
 
         virtual WindowInfo info() const = 0;
         // True while the user is interactively resizing the window; a

@@ -18,6 +18,7 @@
 #include <shlobj.h>
 
 #include <cstdio>
+#include <algorithm>
 #include <cwchar>
 #include <iterator>
 #include <cstring>
@@ -135,6 +136,23 @@ namespace {
         size_t flushes = 0;
         bool focused = false;
         bool present = false;
+    };
+
+    struct TabProbe final: WindowTabs {
+        size_t count() const override { return 2; }
+        size_t active() const override { return active_; }
+        StringView title(size_t index) const override {
+            return index == 0 ? StringView(u8"first") : StringView(u8"second");
+        }
+        WindowColor background() const override { return {38, 50, 56}; }
+        WindowColor foreground() const override { return {236, 239, 241}; }
+        void select(size_t index) override { active_ = index; }
+        void close(size_t index) override { closed = index + 1; }
+        void open() override { ++opened; }
+
+        size_t active_ = 0;
+        size_t closed = 0;
+        size_t opened = 0;
     };
 
     bool clipboardRoundTrip(Clipboard& clipboard, StringView value) {
@@ -342,6 +360,7 @@ int main() {
             .title = u8"Shitty Win32 test",
             .width = 320,
             .height = 200,
+            .globalToggleHotkey = true,
             .input = &input,
             .events = &events,
             .frame = &frame,
@@ -358,20 +377,140 @@ int main() {
             || context.window == nullptr) {
         return 2;
     }
-    const HWND handle = static_cast<HWND>(context.window);
+    const HWND surface = static_cast<HWND>(context.window);
+    const HWND handle = GetParent(surface);
+    if (handle == nullptr) {
+        return 48;
+    }
+    const HWND chrome = GetWindow(handle, GW_CHILD);
+    if (chrome == nullptr || chrome == surface) {
+        return 49;
+    }
+    TabProbe tabs;
+    window.requestTabs(&tabs);
+    RECT chromeClient{};
+    GetClientRect(chrome, &chromeClient);
+    const UINT chromeDpi = GetDpiForWindow(handle);
+    const LONG chromeButton = std::max<LONG>(46, MulDiv(46, chromeDpi == 0 ? 96 : chromeDpi, 96));
+    const LONG chromePlus = std::max<LONG>(34, MulDiv(34, chromeDpi == 0 ? 96 : chromeDpi, 96));
+    const LONG chromeControls = chromeClient.right - 3 * chromeButton;
+    HDC const chromeDc = GetDC(chrome);
+    HDC const memoryDc = chromeDc == nullptr ? nullptr : CreateCompatibleDC(chromeDc);
+    HBITMAP const bitmap = memoryDc == nullptr ? nullptr : CreateCompatibleBitmap(
+        chromeDc,
+        chromeClient.right,
+        chromeClient.bottom
+    );
+    if (chromeDc == nullptr || memoryDc == nullptr || bitmap == nullptr) {
+        if (memoryDc != nullptr) DeleteDC(memoryDc);
+        if (chromeDc != nullptr) ReleaseDC(chrome, chromeDc);
+        return 54;
+    }
+    const HGDIOBJ previousBitmap = SelectObject(memoryDc, bitmap);
+    SendMessageW(chrome, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(memoryDc), PRF_CLIENT);
+    size_t controlInk = 0;
+    const LONG controlScan = std::max<LONG>(0, chromeClient.right - 256);
+    for (LONG x = controlScan; x < chromeClient.right; ++x) {
+        for (LONG y = 0; y < chromeClient.bottom; ++y) {
+            const COLORREF pixel = GetPixel(memoryDc, x, y);
+            if (pixel != CLR_INVALID && pixel != RGB(38, 50, 56)) {
+                ++controlInk;
+            }
+        }
+    }
+    SelectObject(memoryDc, previousBitmap);
+    DeleteObject(bitmap);
+    DeleteDC(memoryDc);
+    ReleaseDC(chrome, chromeDc);
+    if (controlInk < 60) {
+        return 55;
+    }
+    SendMessageW(chrome, WM_LBUTTONDOWN, 0, MAKELPARAM(chromeControls - chromePlus / 2, 15));
+    if (tabs.opened != 1) {
+        return 50;
+    }
+    SendMessageW(chrome, WM_LBUTTONDOWN, 0, MAKELPARAM(16, 15));
+    if (tabs.active_ != 0) {
+        return 51;
+    }
+    const LONG tabsRight = chromeControls - chromePlus;
+    const LONG cell = (tabsRight - 8) / 2;
+    SendMessageW(chrome, WM_LBUTTONDOWN, 0, MAKELPARAM(8 + cell + 8, 15));
+    if (tabs.active_ != 1) {
+        return 52;
+    }
+    SendMessageW(chrome, WM_LBUTTONDOWN, 0, MAKELPARAM(8 + 2 * cell - 8, 15));
+    if (tabs.closed != 2) {
+        return 53;
+    }
+    RECT outer{};
+    POINT clientOrigin{};
+    if (GetWindowRect(handle, &outer) == 0
+            || ClientToScreen(surface, &clientOrigin) == 0
+            || clientOrigin.x != outer.left
+            || clientOrigin.y <= outer.top) {
+        return 40;
+    }
+    const auto hitTest = [handle](LONG x, LONG y) {
+        return SendMessageW(
+            handle,
+            WM_NCHITTEST,
+            0,
+            MAKELPARAM(static_cast<WORD>(x), static_cast<WORD>(y))
+        );
+    };
+    const UINT dpi = GetDpiForWindow(handle);
+    const LONG frameHeight = GetSystemMetricsForDpi(SM_CYSIZEFRAME, dpi)
+        + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
+    const LONG center = outer.left + (outer.right - outer.left) / 2;
+    if (hitTest(center, outer.top + 1) != HTTOP) {
+        return 41;
+    }
+    if (hitTest(outer.left + frameHeight + 4, outer.top + frameHeight + 1) != HTCAPTION) {
+        return 42;
+    }
+    const LONG buttonWidth = MulDiv(46, static_cast<int>(dpi), 96);
+    if (hitTest(outer.right - buttonWidth / 2, outer.top + frameHeight + 1) != HTCLOSE
+            || hitTest(outer.right - buttonWidth - buttonWidth / 2, outer.top + frameHeight + 1) != HTMAXBUTTON
+            || hitTest(outer.right - 2 * buttonWidth - buttonWidth / 2, outer.top + frameHeight + 1) != HTMINBUTTON) {
+        return 47;
+    }
+    if (hitTest(
+            center,
+            outer.top + frameHeight
+                + GetSystemMetricsForDpi(SM_CYCAPTION, dpi) + 1
+        ) != HTCLIENT) {
+        return 43;
+    }
+    if (SendMessageW(surface, WM_NCHITTEST, 0, MAKELPARAM(
+            static_cast<WORD>(outer.left + 1),
+            static_cast<WORD>(outer.top + frameHeight + 20)
+        )) != HTLEFT
+            || SendMessageW(chrome, WM_NCHITTEST, 0, MAKELPARAM(
+                static_cast<WORD>(center),
+                static_cast<WORD>(outer.top + 1)
+            )) != HTTOP) {
+        return 60;
+    }
     if (GetPropW(handle, L"Shitty.Win32.DropTarget") == nullptr) {
         return 34;
     }
 
     const LPARAM aKey = 1 | (0x1e << 16);
+    const size_t flushesBeforeKey = input.flushes;
     SendMessageW(handle, WM_KEYDOWN, 'A', aKey);
     if (input.keys != 1
             || input.lastKey.key != InputKey::Printable
             || input.lastKey.action != InputAction::Press
             || input.lastKey.layoutCodepoint == 0
             || input.lastKey.baseCodepoint != 'a'
-            || input.lastKey.shiftedCodepoint == 0) {
+            || input.lastKey.shiftedCodepoint == 0
+            || input.flushes != flushesBeforeKey) {
         return 18;
+    }
+    SendMessageW(handle, WM_CHAR, 'A', 1);
+    if (input.texts != 1 || input.flushes != flushesBeforeKey + 1) {
+        return 58;
     }
     SendMessageW(handle, WM_KEYUP, 'A', aKey | (1LL << 30) | (1LL << 31));
     if (input.keys != 2 || input.lastKey.action != InputAction::Release) {
@@ -394,7 +533,22 @@ int main() {
         return 39;
     }
     SendMessageW(handle, WM_SYSKEYUP, VK_MENU, rightAlt | (1LL << 30) | (1LL << 31));
-    SendMessageW(handle, WM_CHAR, 'A', 1);
+    SendMessageW(handle, WM_KEYDOWN, VK_CONTROL, leftControl);
+    SendMessageW(handle, WM_KEYDOWN, 'A', aKey);
+    SendMessageW(handle, WM_CHAR, 1, 1);
+    if (input.texts != 1) {
+        return 59;
+    }
+    SendMessageW(handle, WM_KEYUP, 'A', aKey | (1LL << 30) | (1LL << 31));
+    SendMessageW(handle, WM_KEYUP, VK_CONTROL, leftControl | (1LL << 30) | (1LL << 31));
+    const size_t textBeforeBackspace = input.texts;
+    const LPARAM backspace = 1 | (0x0e << 16);
+    SendMessageW(handle, WM_KEYDOWN, VK_BACK, backspace);
+    SendMessageW(handle, WM_CHAR, '\b', 1);
+    SendMessageW(handle, WM_KEYUP, VK_BACK, backspace | (1LL << 30) | (1LL << 31));
+    if (input.texts != textBeforeBackspace) {
+        return 61;
+    }
     SendMessageW(handle, WM_CHAR, 0xd83d, 1);
     SendMessageW(handle, WM_CHAR, 0xde42, 1);
     if (input.texts != 2 || input.lastText.codepoint != 0x1f642) {
@@ -438,9 +592,10 @@ int main() {
     if (input.presences != 2 || input.present) {
         return 24;
     }
+    const size_t focusesBefore = input.focuses;
     SendMessageW(handle, WM_SETFOCUS, 0, 0);
     SendMessageW(handle, WM_KILLFOCUS, 0, 0);
-    if (input.focuses != 2 || input.focused || input.flushes == 0) {
+    if (input.focuses != focusesBefore + 2 || input.focused || input.flushes == 0) {
         return 25;
     }
     window.requestTextInputRect(11, 13, 17, 19);
@@ -547,6 +702,23 @@ int main() {
     }
 
     window.requestShow();
+    if (RegisterHotKey(
+            handle,
+            0x5349,
+            MOD_CONTROL | MOD_NOREPEAT,
+            VK_OEM_3
+        ) != 0) {
+        UnregisterHotKey(handle, 0x5349);
+        return 44;
+    }
+    SendMessageW(handle, WM_HOTKEY, 0x5348, 0);
+    if (IsWindowVisible(handle) != 0) {
+        return 45;
+    }
+    SendMessageW(handle, WM_HOTKEY, 0x5348, 0);
+    if (IsWindowVisible(handle) == 0) {
+        return 46;
+    }
     const WindowInfo shown = window.info();
     if (shown.width != 400 || shown.height != 250) {
         std::fprintf(stderr, "shown size=%ux%u\n", shown.width, shown.height);
@@ -621,11 +793,11 @@ int main() {
         u8"secondary Ω 🙂"
     );
     DWORD dropEffect = DROPEFFECT_COPY;
-    RECT dropRect;
-    GetWindowRect(handle, &dropRect);
+    POINT dropClient{1, 1};
+    ClientToScreen(handle, &dropClient);
     const POINTL dropPoint = {
-        .x = dropRect.left + 1,
-        .y = dropRect.top + 1,
+        .x = dropClient.x,
+        .y = dropClient.y,
     };
     IDropTarget* const nativeDrop = static_cast<IDropTarget*>(
         GetPropW(handle, L"Shitty.Win32.DropTarget")
@@ -681,7 +853,14 @@ int main() {
     wake.signal();
     platform.run();
 
-    window.requestClose();
+    GetClientRect(chrome, &chromeClient);
+    const LONG closeLeft = chromeClient.right - 3 * chromeButton;
+    SendMessageW(
+        chrome,
+        WM_LBUTTONDOWN,
+        0,
+        MAKELPARAM(closeLeft + 2 * chromeButton + chromeButton / 2, 15)
+    );
     platform.run();
 
     return events.calls == 1 ? 0 : 16;

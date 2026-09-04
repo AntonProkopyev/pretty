@@ -130,6 +130,7 @@ namespace {
         {"config", OptionKind::SepArg, nullptr, nullptr, "Path to the TOML config file", true},
         {"colorScheme", OptionKind::SepArg, nullptr, "default", "Named terminal color scheme"},
         {"cr", OptionKind::SepArg, nullptr, nullptr, "Cursor color"},
+        {"cursorShape", OptionKind::SepArg, nullptr, "block", "Default cursor shape: block, underline or bar"},
         {"debug", OptionKind::SepArg, nullptr, nullptr, "Append window, font and grid diagnostics to this file", true},
         {"dump", OptionKind::SepArg, nullptr, nullptr, "Dump raw PTY input to file"},
         {"fg", OptionKind::SepArg, nullptr, "#fff", "Foreground color"},
@@ -138,6 +139,7 @@ namespace {
         {"fullscreen", OptionKind::NoArg, "true", "false", "Start with the window fullscreen"},
         {"soft", OptionKind::SepArg, nullptr, "-1", "Unhinted subpixel rendering; 0..100 scales the stem darkening"},
         {"geometry", OptionKind::SepArg, nullptr, "80x24", "Terminal size in chars"},
+        {"globalHotkey", OptionKind::SepArg, nullptr, nullptr, "Windows global window toggle; ctrl+`"},
         {"kittyCtrlBaseLayout", OptionKind::NoArg, "true", "false", "Report the ASCII base key as the Kitty primary under Ctrl"},
         {"vulkanInfo", OptionKind::NoArg, "true", "false", "Print Vulkan information", true},
         {"vulkanBlit", OptionKind::NoArg, "true", "false", "Present through the offscreen blit path", true},
@@ -1239,6 +1241,13 @@ void OptionsParser::parse() {
         getSoft(soft);
         getGeometry(nCols, nRows);
         optical = getBool("optical");
+        StringView hotkey;
+        if (get("globalHotkey", hotkey)) {
+            if (hotkey != StringView(u8"ctrl+`")) {
+                raiseError(StringView(u8"-globalHotkey: expected ctrl+`"));
+            }
+            globalHotkey = true;
+        }
         vulkanInfo = getBool("vulkanInfo");
         vulkanBlit = getBool("vulkanBlit");
         if (!get("shell", shell)) {
@@ -1319,6 +1328,20 @@ void OptionsParser::parse() {
             convColor("cr", cursor, vt.cr);
         } else {
             vt.cr = vt.fg;
+        }
+        StringView cursorShape;
+        get("cursorShape", cursorShape);
+        if (cursorShape == StringView(u8"block")) {
+            vt.cursorShape = TerminalCursor::Style::filled_block;
+            vt.cursorStyleParam = 2;
+        } else if (cursorShape == StringView(u8"underline")) {
+            vt.cursorShape = TerminalCursor::Style::underline;
+            vt.cursorStyleParam = 4;
+        } else if (cursorShape == StringView(u8"bar")) {
+            vt.cursorShape = TerminalCursor::Style::bar;
+            vt.cursorStyleParam = 6;
+        } else {
+            raiseError(StringView(u8"-cursorShape: expected block, underline or bar"));
         }
         vt.altScrollMode = getBool("altScroll");
         naturalEditing = getBool("naturalEditing");

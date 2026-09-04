@@ -658,6 +658,7 @@ int ApplicationImpl::run(int argc, char* argv[]) {
             .width = (u32)(max(320, (int)(composer.opts->nCols) * composer.opts->fontsize / 2)),
             .height = (u32)(max(200, (int)(composer.opts->nRows) * composer.opts->fontsize)),
             .decorations = !composer.opts->noDecorations,
+            .globalToggleHotkey = composer.opts->globalHotkey,
             .input = composer.input,
             .events = this,
             .frame = this,
@@ -672,6 +673,8 @@ int ApplicationImpl::run(int argc, char* argv[]) {
     // The title-bar tab strip: a fire-and-forget listener over the
     // NSWindow the render context carries.
     createCsdTabsUi(*composer.pool, composer);
+#elif defined(_WIN32)
+    createCsdTabsWin32Ui(*composer.pool, composer);
 #endif
     composer.config->start();
     STD_DEFER {
@@ -690,6 +693,7 @@ int ApplicationImpl::run(int argc, char* argv[]) {
     createRenderer();
     SessionSet::create(composer);
     composer.platform->poller()->timeout(foregroundPollUs, foregroundTitlePoll_);
+    composer.window->requestTabsRedraw();
 
     eventLoop();
     composer.platform->poller()->cancel(foregroundTitlePoll_);

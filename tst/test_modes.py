@@ -62,6 +62,15 @@ class ModeTest(unittest.TestCase):
             terminal.write(b"\x1b[5 q\x1b[?25h")
             self.assertEqual(terminal.snapshot().cursor_style, 4)
 
+    def test_configured_bar_cursor_is_initial_shape(self):
+        with Shitty(
+            columns=4,
+            rows=2,
+            extra_arguments=("-cursorShape", "bar"),
+        ) as terminal:
+            terminal.focus(True)
+            self.assertEqual(terminal.snapshot().cursor_style, 4)
+
     def test_alternate_screen_restores_primary_contents_and_cursor(self):
         with Shitty(columns=8, rows=2) as terminal:
             terminal.write(b"primary\x1b[?1049halt\x1b[?1049l")
