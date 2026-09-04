@@ -43,6 +43,8 @@ elif "apple-darwin" in target_platform:
     system = "Darwin"
 elif "linux" in target_platform:
     system = "Linux"
+elif "windows" in target_platform:
+    system = "Windows"
 elif build.target != build.host:
     raise RuntimeError(f"unsupported target: {target_platform}")
 else:
@@ -144,6 +146,22 @@ elif system == "Darwin":
             "-Wl,-framework,QuartzCore",
         ]),
     ]
+elif system == "Windows":
+    backend_source = "$(S)/platform_win32.cpp"
+    backend_cppflags = [
+        "-DUNICODE=1",
+        "-D_UNICODE=1",
+        "-D_WIN32_WINNT=0x0A00",
+    ]
+    backend_deps = [
+        dependency(ldflags=[
+            "-luser32",
+            "-lshell32",
+            "-lole32",
+            "-limm32",
+            "-luuid",
+        ]),
+    ]
 else:
     raise RuntimeError(f"unsupported platform: {system}")
 
@@ -151,7 +169,10 @@ libplt = library(
     name="plt_headless" if platforms_headless else "plt",
     srcs=common_sources if platforms_headless else [*common_sources, backend_source],
     public_cflags=["-I$(S)", "-I$(S)/.."],
-    cppflags=["-DPLT_HEADLESS=1"] if platforms_headless else [],
+    cppflags=[
+        *(["-DPLT_HEADLESS=1"] if platforms_headless else []),
+        *locals().get("backend_cppflags", []),
+    ],
     cxxflags=locals().get("backend_cxxflags", []),
     deps=[libstd, *backend_deps],
     output="$(B)/libplt_headless.a" if platforms_headless else "$(B)/libplt.a",

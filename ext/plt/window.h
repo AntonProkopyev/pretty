@@ -12,6 +12,7 @@ namespace plt {
     enum class RenderBackend : u8 {
         Wayland,
         Cocoa,
+        Win32,
         Headless
     };
 
