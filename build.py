@@ -1359,7 +1359,7 @@ wayland_frame_stall = command(
     outputs=["$(B)/tst/wayland-frame-stall.stamp"],
     deps=[st],
     cmd=[
-        ["python3", "tst/wayland_frame_stall.py"],
+        [sys.executable, "tst/wayland_frame_stall.py"],
         touch_stamp("$(B)/tst/wayland-frame-stall.stamp"),
     ],
     cwd="$(S)",
@@ -1383,7 +1383,7 @@ wayland_title_fallback = command(
     outputs=["$(B)/tst/wayland-title-fallback.stamp"],
     deps=[st],
     cmd=[
-        ["python3", "tst/wayland_title_fallback.py"],
+        [sys.executable, "tst/wayland_title_fallback.py"],
         touch_stamp("$(B)/tst/wayland-title-fallback.stamp"),
     ],
     cwd="$(S)",
