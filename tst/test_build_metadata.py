@@ -4,6 +4,7 @@
 
 import concurrent.futures
 import importlib.util
+import json
 import os
 import shutil
 import subprocess
@@ -142,6 +143,251 @@ class BuildMetadataTests(unittest.TestCase):
         self.assertNotIn("git submodule", readme)
         self.assertIn("ext/libstd", readme)
 
+    def test_graph_python_commands_use_current_interpreter(self):
+        result = self.run_build(ROOT / "build.py", "--graph")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        graph = json.loads(result.stdout)
+        commands = [
+            command
+            for node in graph["nodes"]
+            for command in node.get("cmd", [])
+            if command
+        ]
+
+        hardcoded = [command for command in commands if command[0] == "python3"]
+        self.assertEqual(len(hardcoded), 0)
+        self.assertTrue(any(command[0] == sys.executable for command in commands))
+
+    def test_windows_native_target_uses_mingw_triple(self):
+        loader = SourceFileLoader("shitty_build_windows_target", str(ROOT / "build"))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        self.assertIsNotNone(spec)
+        runner = importlib.util.module_from_spec(spec)
+        sys.modules[loader.name] = runner
+        loader.exec_module(runner)
+
+        with mock.patch.object(runner.os, "name", "nt"), mock.patch.object(
+            runner.sysconfig,
+            "get_config_var",
+            return_value=None,
+        ), mock.patch.object(runner.platform, "machine", return_value="AMD64"):
+            self.assertEqual(runner.native_target(), "x86_64-w64-windows-gnu")
+
+    def test_windows_programs_have_exe_suffix(self):
+        loader = SourceFileLoader("shitty_build_windows_program", str(ROOT / "build"))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        self.assertIsNotNone(spec)
+        runner = importlib.util.module_from_spec(spec)
+        sys.modules[loader.name] = runner
+        loader.exec_module(runner)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "main.c").write_text("int main(void) { return 0; }\n")
+            context = runner.BuildContext(
+                root,
+                root / ".out",
+                target="x86_64-w64-windows-gnu",
+            )
+            target = context.program(
+                name="demo",
+                output="$(B)/demo",
+                srcs=["$(S)/main.c"],
+            )
+            with mock.patch.object(
+                context,
+                "_compiler_command",
+                return_value=["target-cc"],
+            ):
+                context._emit_target(target, set())
+
+            self.assertEqual(target.root.outputs, ["$(B)/demo.exe"])
+
+    def test_windows_resources_use_llvm_rc(self):
+        loader = SourceFileLoader("shitty_build_windows_resource", str(ROOT / "build"))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        self.assertIsNotNone(spec)
+        runner = importlib.util.module_from_spec(spec)
+        sys.modules[loader.name] = runner
+        loader.exec_module(runner)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "main.c").write_text("int main(void) { return 0; }\n")
+            (root / "app.rc").write_text("1 VERSIONINFO\n")
+            context = runner.BuildContext(
+                root,
+                root / ".out",
+                target="x86_64-w64-windows-gnu",
+            )
+            context.rc = "llvm-rc"
+            target = context.program(
+                name="demo",
+                srcs=["$(S)/main.c", "$(S)/app.rc"],
+            )
+            with mock.patch.object(
+                context,
+                "_compiler_command",
+                return_value=["target-cc"],
+            ):
+                context._emit_target(target, set())
+
+            resource = next(
+                node for node in target.nodes
+                if node.inputs == ["$(S)/app.rc"]
+            )
+            self.assertEqual(resource.commands[0][0:2], ["llvm-rc", "/fo"])
+            self.assertTrue(resource.outputs[0].endswith(".res"))
+            self.assertEqual(resource.commands[0][-1], "$(S)/app.rc")
+
+    def test_windows_supervisor_runs_main_without_posix_process_group(self):
+        loader = SourceFileLoader("shitty_build_windows_supervisor", str(ROOT / "build"))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        self.assertIsNotNone(spec)
+        runner = importlib.util.module_from_spec(spec)
+        sys.modules[loader.name] = runner
+        loader.exec_module(runner)
+
+        with mock.patch.object(runner.os, "name", "nt"), mock.patch.object(
+            runner,
+            "main",
+            return_value=7,
+        ) as main, mock.patch.object(
+            runner.signal,
+            "pthread_sigmask",
+            side_effect=AssertionError("POSIX supervisor used on Windows"),
+        ):
+            self.assertEqual(runner.supervised_main(["--list"]), 7)
+
+        main.assert_called_once_with(["--list"])
+
+    def test_windows_build_runner_uses_native_file_lock(self):
+        loader = SourceFileLoader("shitty_build_windows_lock", str(ROOT / "build"))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        self.assertIsNotNone(spec)
+        runner = importlib.util.module_from_spec(spec)
+        sys.modules[loader.name] = runner
+        msvcrt = mock.Mock(LK_LOCK=1, LK_UNLCK=2)
+
+        with mock.patch.object(os, "name", "nt"), mock.patch.dict(
+            sys.modules,
+            {"fcntl": None, "msvcrt": msvcrt},
+        ):
+            loader.exec_module(runner)
+
+        with tempfile.TemporaryFile() as lock_file:
+            with runner.FileLock(lock_file.fileno()):
+                pass
+
+            self.assertEqual(
+                msvcrt.locking.call_args_list,
+                [
+                    mock.call(lock_file.fileno(), msvcrt.LK_LOCK, 1),
+                    mock.call(lock_file.fileno(), msvcrt.LK_UNLCK, 1),
+                ],
+            )
+
+    def test_cache_store_copies_when_hard_links_are_unavailable(self):
+        loader = SourceFileLoader("shitty_build_cache_store_copy", str(ROOT / "build"))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        self.assertIsNotNone(spec)
+        runner = importlib.util.module_from_spec(spec)
+        sys.modules[loader.name] = runner
+        loader.exec_module(runner)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            context = runner.BuildContext(root, root / ".out")
+            executor = runner.Executor(context, 1, False, False)
+            output = root / "output"
+            output.write_text("cached")
+            manifest = {}
+
+            with mock.patch.object(
+                runner.os,
+                "link",
+                side_effect=PermissionError("hard links unavailable"),
+            ):
+                executor._store_path(output, "$(B)/output", manifest)
+
+            cached = executor._cas_path(manifest["$(B)/output"]["cas"])
+            self.assertEqual(cached.read_text(), "cached")
+
+    def test_cache_restore_copies_when_links_are_unavailable(self):
+        loader = SourceFileLoader("shitty_build_cache_restore_copy", str(ROOT / "build"))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        self.assertIsNotNone(spec)
+        runner = importlib.util.module_from_spec(spec)
+        sys.modules[loader.name] = runner
+        loader.exec_module(runner)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            context = runner.BuildContext(root, root / ".out")
+            executor = runner.Executor(context, 1, False, False)
+            source = root / "source"
+            source.write_text("restored")
+            stored = {}
+            executor._store_path(source, "$(B)/output", stored)
+            uid = "a" * 64
+
+            for symlink in (False, True):
+                with self.subTest(symlink=symlink):
+                    manifest = executor._manifest_path(uid)
+                    manifest.parent.mkdir(parents=True, exist_ok=True)
+                    manifest.write_text(json.dumps(stored))
+                    destination = root / ("link" if symlink else "file")
+                    with mock.patch.object(
+                        runner.os,
+                        "link",
+                        side_effect=PermissionError("hard links unavailable"),
+                    ), mock.patch.object(
+                        runner.os,
+                        "symlink",
+                        side_effect=PermissionError("symbolic links unavailable"),
+                    ):
+                        executor._restore(uid, destination, symlink)
+
+                    self.assertEqual((destination / "output").read_text(), "restored")
+
+    def test_publish_refreshes_managed_copy_without_symlink_privilege(self):
+        loader = SourceFileLoader("shitty_build_publish_copy", str(ROOT / "build"))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        self.assertIsNotNone(spec)
+        runner = importlib.util.module_from_spec(spec)
+        sys.modules[loader.name] = runner
+        loader.exec_module(runner)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            context = runner.BuildContext(root, root / ".out")
+            output = context.build_root / "demo"
+            output.parent.mkdir(parents=True)
+            output.write_text("first")
+            target = runner.Target("program", name="demo")
+            target.root = runner.Node([], ["$(B)/demo"], [])
+
+            with mock.patch.object(
+                runner.os,
+                "link",
+                side_effect=PermissionError("hard links unavailable"),
+            ), mock.patch.object(
+                runner.os,
+                "symlink",
+                side_effect=PermissionError("symbolic links unavailable"),
+            ):
+                context.publish([target])
+                self.assertEqual((root / "demo").read_text(), "first")
+                output.write_text("second")
+                context.publish([target])
+                self.assertEqual((root / "demo").read_text(), "second")
+
+                (root / "demo").write_text("user-owned")
+                output.write_text("third")
+                context.publish([target])
+
+            self.assertEqual((root / "demo").read_text(), "user-owned")
+
     def test_header_probe_uses_target_compiler_and_current_flags(self):
         loader = SourceFileLoader("shitty_build_header_probe", str(ROOT / "build"))
         spec = importlib.util.spec_from_loader(loader.name, loader)
@@ -182,6 +428,135 @@ class BuildMetadataTests(unittest.TestCase):
                 run.call_args.kwargs["input"],
                 "#include <optional/header.h>\n",
             )
+
+    def test_cxx_standard_probe_uses_target_compiler(self):
+        loader = SourceFileLoader("shitty_build_cxx_standard_probe", str(ROOT / "build"))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        self.assertIsNotNone(spec)
+        runner = importlib.util.module_from_spec(spec)
+        sys.modules[loader.name] = runner
+        loader.exec_module(runner)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            compiler = root / (
+                "target-clang++.exe" if os.name == "nt" else "target-clang++"
+            )
+            compiler.touch(mode=0o755)
+            context = runner.BuildContext(
+                ROOT,
+                root / ".out",
+                target="x86_64-w64-windows-gnu",
+            )
+            failed = subprocess.CompletedProcess([], 1)
+            with mock.patch.dict(
+                os.environ,
+                {"CXX": str(compiler)},
+            ), mock.patch.object(
+                runner.subprocess,
+                "run",
+                return_value=failed,
+            ) as run:
+                with self.assertRaises(RuntimeError):
+                    context.load(ROOT / "build.py")
+
+            command = run.call_args.args[0]
+            self.assertEqual(command[0], str(compiler))
+            self.assertIn("--target=x86_64-w64-windows-gnu", command)
+
+    def test_headless_plt_accepts_windows_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            compiler = root / "clang"
+            compiler.touch(mode=0o755)
+            environment = os.environ.copy()
+            environment.update({
+                "CC": str(compiler),
+                "CXX": str(compiler),
+                "CPPFLAGS": "-Dplatforms=headless",
+            })
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    ROOT / "build",
+                    "--build-file", ROOT / "ext" / "plt" / "build.py",
+                    "--target", "x86_64-w64-windows-gnu",
+                    "--graph",
+                ],
+                env=environment,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            graph = json.loads(result.stdout)
+            sources = {
+                source
+                for node in graph["nodes"]
+                for source in node["inputs"]
+            }
+            self.assertIn("$(S)/platform_headless.cpp", sources)
+            self.assertNotIn("$(S)/platform_wayland.cpp", sources)
+            self.assertNotIn("$(S)/platform_cocoa.mm", sources)
+            platform = next(
+                node for node in graph["nodes"]
+                if "$(S)/platform.cpp" in node["inputs"]
+            )
+            self.assertIn("-DPLT_HEADLESS=1", platform["cmd"][0])
+
+    def test_windows_libstd_graph_excludes_posix_and_test_sources(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            compiler = root / "clang"
+            compiler.touch(mode=0o755)
+            environment = os.environ.copy()
+            environment.update({
+                "CC": str(compiler),
+                "CXX": str(compiler),
+            })
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    ROOT / "build",
+                    "--build-file", ROOT / "ext" / "libstd" / "build.py",
+                    "--target", "x86_64-w64-windows-gnu",
+                    "--graph",
+                ],
+                env=environment,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            graph = json.loads(result.stdout)
+            sources = {
+                source
+                for node in graph["nodes"]
+                for source in node["inputs"]
+                if source.endswith((".cpp", ".c"))
+            }
+            forbidden = (
+                "$(S)/std/dns/",
+                "$(S)/std/net/",
+                "$(S)/std/ios/in_fd",
+                "$(S)/std/ios/out_fd",
+                "$(S)/std/ios/stream_tcp",
+                "$(S)/std/sys/event_fd.cpp",
+                "$(S)/std/sys/mem_fd.cpp",
+                "$(S)/std/thr/io_classic.cpp",
+                "$(S)/std/thr/io_uring.cpp",
+                "$(S)/std/thr/poll_fd.cpp",
+                "$(S)/std/thr/reactor_poll.cpp",
+                "$(S)/tst/",
+            )
+
+            self.assertTrue("$(S)/std/ios/output.cpp" in sources)
+            self.assertTrue(all(not source.endswith("_ut.cpp") for source in sources))
+            for prefix in forbidden:
+                with self.subTest(prefix=prefix):
+                    self.assertTrue(all(not source.startswith(prefix) for source in sources))
 
     def test_tool_resolution_preserves_the_path_selected_argv_zero(self):
         loader = SourceFileLoader("shitty_build_tool_path", str(ROOT / "build"))

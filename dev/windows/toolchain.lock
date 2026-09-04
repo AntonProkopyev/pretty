@@ -1,0 +1,10 @@
+version = 1
+vcpkg_commit = "abb6dda5cc32914d2e64d7d72b974dc301d1fc8a"
+
+[assets.linux_x86_64]
+url = "https://github.com/mstorsjo/llvm-mingw/releases/download/20260826/llvm-mingw-20260826-ucrt-ubuntu-22.04-x86_64.tar.xz"
+sha256 = "cee8d2ce3da5145ce4dc882e70d0b0719a783d53a99752c60948fc0659975a65"
+
+[assets.windows_x86_64]
+url = "https://github.com/mstorsjo/llvm-mingw/releases/download/20260826/llvm-mingw-20260826-ucrt-x86_64.zip"
+sha256 = "ae601f4e0f72bbdf441ad2df8bb16f037e2e9251559ea6b37b4057aef39c06c3"

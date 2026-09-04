@@ -5,6 +5,7 @@
 #include <std/sys/throw.h>
 #include <std/alg/minmax.h>
 #include <std/alg/xchg.h>
+#include <std/dbg/insist.h>
 #include <std/lib/list.h>
 #include <std/lib/vector.h>
 #include <std/map/treap.h>
@@ -12,10 +13,17 @@
 #include <std/mem/obj_list.h>
 #include <std/mem/obj_pool.h>
 
-#include <cerrno>
 #include <climits>
 #include <cstdint>
-#include <poll.h>
+
+#if defined(_WIN32)
+    #define WIN32_LEAN_AND_MEAN
+    #define NOMINMAX
+    #include <windows.h>
+#else
+    #include <cerrno>
+    #include <poll.h>
+#endif
 
 using namespace plt;
 using namespace stl;
@@ -159,13 +167,22 @@ namespace {
         void wait(u64 monotonicDeadline) override;
         void dispatchTimers() override;
         u64 nextDeadline() const override;
+#if defined(_WIN32)
+        PollerLoop& armNative(void* handle, TimerCallback& callback) override;
+#endif
 
         IntrusiveList armed;
+#if !defined(_WIN32)
         Vector<struct pollfd> pollFDs;
         Vector<PollWaiter*> pending;
+#endif
         Vector<TimerCallback*> deferred;
         Vector<TimerCallback*> deferredRound;
         TimerQueue timers;
+#if defined(_WIN32)
+        void* nativeHandle = nullptr;
+        TimerCallback* nativeCallback = nullptr;
+#endif
     };
 }
 
@@ -224,7 +241,38 @@ void PollerLoopImpl::dispatchTimers() {
     timers.dispatch(monotonicNowUs());
 }
 
+#if defined(_WIN32)
+PollerLoop& PollerLoopImpl::armNative(void* handle, TimerCallback& callback) {
+    STD_INSIST(nativeHandle == nullptr);
+    nativeHandle = handle;
+    nativeCallback = &callback;
+    return *this;
+}
+#endif
+
 void PollerLoopImpl::wait(u64 monotonicDeadline) {
+#if defined(_WIN32)
+    STD_INSIST(armed.empty());
+    const DWORD timeoutMilliseconds = [&]() -> DWORD {
+        if (monotonicDeadline == UINT64_MAX) {
+            return INFINITE;
+        }
+        const u64 now = monotonicNowUs();
+        const u64 timeoutUs = monotonicDeadline > now ? monotonicDeadline - now : 0;
+        return static_cast<DWORD>(
+            min<u64>((timeoutUs + 999) / 1000, MAXDWORD - 1)
+        );
+    }();
+    if (nativeHandle == nullptr) {
+        Sleep(timeoutMilliseconds);
+    } else {
+        const DWORD result = WaitForSingleObject(nativeHandle, timeoutMilliseconds);
+        STD_INSIST(result == WAIT_OBJECT_0 || result == WAIT_TIMEOUT);
+        if (result == WAIT_OBJECT_0) {
+            nativeCallback->ready();
+        }
+    }
+#else
     pollFDs.clear();
     pending.clear();
     for (IntrusiveNode* node = armed.mutFront(); node != armed.mutEnd(); node = node->next) {
@@ -271,6 +319,7 @@ void PollerLoopImpl::wait(u64 monotonicDeadline) {
             .flags = PollFD::fromPollEvents((short)(waiter->readyFlags)),
         });
     }
+#endif
 
     // Deferred callbacks run once the round's descriptor waiters have been
     // dispatched; a callback deferring again lands in the next round.

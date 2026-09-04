@@ -49,6 +49,56 @@ jobs:
           retention-days: 7
           compression-level: 9
 
+  windows-toolchain:
+    name: Windows toolchain proxy
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Run Windows-safe build runner tests
+        shell: pwsh
+        run: |
+          python -m unittest `
+            tst.test_build_metadata.BuildMetadataTests.test_windows_native_target_uses_mingw_triple `
+            tst.test_build_metadata.BuildMetadataTests.test_windows_programs_have_exe_suffix `
+            tst.test_build_metadata.BuildMetadataTests.test_windows_resources_use_llvm_rc `
+            tst.test_build_metadata.BuildMetadataTests.test_windows_supervisor_runs_main_without_posix_process_group `
+            tst.test_build_metadata.BuildMetadataTests.test_windows_build_runner_uses_native_file_lock `
+            tst.test_build_metadata.BuildMetadataTests.test_cache_store_copies_when_hard_links_are_unavailable `
+            tst.test_build_metadata.BuildMetadataTests.test_cache_restore_copies_when_links_are_unavailable `
+            tst.test_build_metadata.BuildMetadataTests.test_publish_refreshes_managed_copy_without_symlink_privilege `
+            tst.test_build_metadata.BuildMetadataTests.test_cxx_standard_probe_uses_target_compiler `
+            tst.test_windows_toolchain
+
+      - name: Fetch pinned llvm-mingw
+        shell: pwsh
+        run: |
+          $toolchain = Join-Path $env:RUNNER_TEMP "llvm-mingw"
+          python dev/windows/fetch_toolchain.py `
+            --lock dev/windows/toolchain.lock `
+            --platform windows_x86_64 `
+            --output $toolchain
+
+      - name: Compile, inspect, and run PE probe
+        shell: pwsh
+        run: |
+          $toolchain = Join-Path $env:RUNNER_TEMP "llvm-mingw"
+          $probe = Join-Path $env:RUNNER_TEMP "probe.exe"
+          python dev/windows/probe_toolchain.py `
+            --toolchain $toolchain `
+            --output $probe
+          & $probe
+          if ($LASTEXITCODE -ne 0) {
+            throw "PE probe exited with $LASTEXITCODE"
+          }
+
   tests-alpine:
     name: Tests Alpine
     needs: build

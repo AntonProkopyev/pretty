@@ -1,5 +1,6 @@
 import os
 import platform as host
+import sys
 
 import build
 
@@ -36,7 +37,9 @@ common_sources = [
     "$(S)/window.cpp",
 ]
 target_platform = build.target
-if "apple-darwin" in target_platform:
+if platforms_headless:
+    system = "Headless"
+elif "apple-darwin" in target_platform:
     system = "Darwin"
 elif "linux" in target_platform:
     system = "Linux"
@@ -148,6 +151,7 @@ libplt = library(
     name="plt_headless" if platforms_headless else "plt",
     srcs=common_sources if platforms_headless else [*common_sources, backend_source],
     public_cflags=["-I$(S)", "-I$(S)/.."],
+    cppflags=["-DPLT_HEADLESS=1"] if platforms_headless else [],
     cxxflags=locals().get("backend_cxxflags", []),
     deps=[libstd, *backend_deps],
     output="$(B)/libplt_headless.a" if platforms_headless else "$(B)/libplt.a",
@@ -173,7 +177,7 @@ if build.target == build.host and not platforms_headless:
     )
 
     # Hard per-invocation timeout so a hung test cannot wedge the whole CI run.
-    test_timeout = ["python3", "$(S)/tests/run_timed.py", "120"]
+    test_timeout = [sys.executable, "$(S)/tests/run_timed.py", "120"]
     test_deps = [plt_unit_tests]
     test_commands = [[*test_timeout, "$(B)/plt_unit_tests"]]
     if system == "Linux":
@@ -209,7 +213,7 @@ if build.target == build.host and not platforms_headless:
         cmd=[
             *test_commands,
             [
-                "python3", "-c",
+                sys.executable, "-c",
                 "from pathlib import Path; Path(r'$(B)/plt_tests.stamp').touch()",
             ],
         ],

@@ -3,6 +3,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from datetime import date
 from pathlib import Path
 
@@ -74,7 +75,14 @@ build.cppflags += [f'-DSHITTY_VERSION="{shitty_version}"']
 # not know; fail here with directions instead of deep inside the graph.
 cxx = os.environ.get("CXX", "c++")  # the runner's own compiler default
 if subprocess.run(
-    [cxx, "-std=c++26", "-fsyntax-only", "-x", "c++", os.devnull],
+    [
+        *build.compiler_command(cxx),
+        "-std=c++26",
+        "-fsyntax-only",
+        "-x",
+        "c++",
+        os.devnull,
+    ],
     capture_output=True,
 ).returncode != 0:
     raise RuntimeError(
@@ -117,7 +125,7 @@ def command(**kwargs):
     def is_test(argv):
         if argv[0] == "$(B)/unit_tests":
             return True
-        return argv[0] == "python3" and len(argv) > 1 and (
+        return argv[0] == sys.executable and len(argv) > 1 and (
             argv[1].startswith("tst/") or argv[1] == "-m"
         )
 
@@ -127,7 +135,7 @@ def command(**kwargs):
         if any(is_test(argv) for argv in nested):
             kwargs["cmd"] = [
                 [
-                    "python3",
+                    sys.executable,
                     "$(S)/tst/run_timed.py",
                     str(test_timeout_seconds),
                     *argv,
@@ -273,11 +281,11 @@ if build.target == build.host and os.path.isfile(os.path.join(os.path.dirname(__
         cmd=[
             # The same hard per-invocation timeout the nested suite uses.
             *[
-                ["python3", "$(S)/ext/plt/tests/run_timed.py", "120", program.output]
+                [sys.executable, "$(S)/ext/plt/tests/run_timed.py", "120", program.output]
                 for program in plt_test_programs
             ],
             [
-                "python3", "-c",
+                sys.executable, "-c",
                 "from pathlib import Path; Path(r'$(B)/plt-tests.stamp').touch()",
             ],
         ],
@@ -317,7 +325,7 @@ for render_shader_name in render_shader_names:
         inputs=["$(S)/lib/shitty/render.comp", "$(S)/lib/shitty/generate_render_shaders.py"],
         outputs=[render_shader_output],
         cmd=[
-            "python3",
+            sys.executable,
             "$(S)/lib/shitty/generate_render_shaders.py",
             "compile",
             "$(S)/lib/shitty/render.comp",
@@ -335,7 +343,7 @@ render_spv = command(
     outputs=["$(B)/render_spv.h"],
     deps=render_shader_targets,
     cmd=[
-        "python3",
+        sys.executable,
         "$(S)/lib/shitty/generate_render_shaders.py",
         "combine",
         "$(B)/render_spv.h",
@@ -351,7 +359,7 @@ if darwin:
         inputs=["$(S)/lib/shitty/render.comp", "$(S)/lib/shitty/generate_render_shaders.py"],
         outputs=["$(B)/render_msl.h"],
         cmd=[
-            "python3",
+            sys.executable,
             "$(S)/lib/shitty/generate_render_shaders.py",
             "metal",
             "$(S)/lib/shitty/render.comp",
@@ -394,7 +402,7 @@ if ragel_is_6:
         inputs=["$(S)/lib/vterm/parser.rl", "$(S)/lib/vterm/check_parser_totality.py"],
         outputs=["$(B)/parser.rl.total"],
         cmd=[
-            "python3",
+            sys.executable,
             "$(S)/lib/vterm/check_parser_totality.py",
             "$(S)/lib/vterm/parser.rl",
             "$(B)/parser.rl.total",
@@ -437,7 +445,7 @@ unicode_data = command(
     inputs=unicode_data_inputs,
     outputs=["$(B)/unicode_data.h"],
     cmd=[
-        "python3",
+        sys.executable,
         "$(S)/lib/vterm/unicode_data.py",
         "$(S)/ext/unicode",
         "$(B)/unicode_data.h",
@@ -486,7 +494,7 @@ input_keys = command(
     inputs=["$(S)/lib/shitty/generate_input_keys.py", "$(S)/ext/plt/input.h"],
     outputs=["$(B)/input_keys.h"],
     cmd=[
-        "python3",
+        sys.executable,
         "$(S)/lib/shitty/generate_input_keys.py",
         "$(S)/ext/plt/input.h",
         "$(B)/input_keys.h",
@@ -507,7 +515,7 @@ def icon_png(name, svg, png):
         cmd = [
             ["svg2png", svg, "1024x1024"],
             [
-                "python3",
+                sys.executable,
                 "-c",
                 f"import os; os.replace(r'{produced}', r'{png}')",
             ],
@@ -534,7 +542,7 @@ shitty_icon_data = command(
     deps=[shitty_icon_png],
     outputs=["$(B)/shitty_icon_data.h"],
     cmd=[
-        "python3",
+        sys.executable,
         "$(S)/lib/shitty/generate_font_data.py",
         "$(B)/shitty_icon_data.h",
         "shittyIcon=$(B)/shitty.png",
@@ -556,7 +564,7 @@ pretty_icon_data = command(
     deps=[pretty_icon_png],
     outputs=["$(B)/pretty_icon_data.h"],
     cmd=[
-        "python3",
+        sys.executable,
         "$(S)/lib/shitty/generate_font_data.py",
         "$(B)/pretty_icon_data.h",
         "prettyIcon=$(B)/pretty.png",
@@ -576,7 +584,7 @@ font_coverage = command(
     ],
     outputs=["$(B)/font_coverage.h"],
     cmd=[
-        "python3",
+        sys.executable,
         "$(S)/lib/shitty/generate_font_coverage.py",
         "$(B)/font_coverage.h",
         "$(S)/ext/fonts/NotoColorEmoji.ttf",
@@ -598,7 +606,7 @@ font_data = command(
     ],
     outputs=["$(B)/font_data.h"],
     cmd=[
-        "python3",
+        sys.executable,
         "$(S)/lib/shitty/generate_font_data.py",
         "$(B)/font_data.h",
         "embeddedFontMono=$(S)/ext/fonts/JetBrainsMonoNerdFont-Regular.ttf",
@@ -617,7 +625,7 @@ terminal_colors_data = command(
     ],
     outputs=["$(B)/terminal_colors.json.h"],
     cmd=[
-        "python3",
+        sys.executable,
         "$(S)/lib/shitty/terminal_colors.py",
         "generate",
         "$(B)/terminal_colors.json.h",
@@ -980,7 +988,7 @@ if linux:
         outputs=["$(B)/libshitty_vt.a"],
         deps=[libshitty_vt_core, libstd_pic, plt_headless],
         cmd=[[
-            "python3",
+            sys.executable,
             "$(S)/lib/embed/merge_archives.py",
             "$(B)/libshitty_vt.a",
             libshitty_vt_core.output,
@@ -1004,7 +1012,7 @@ if linux:
         outputs=["$(B)/libshitty_vt.so"],
         deps=[libshitty_vt_core, libstd_pic, plt_headless],
         cmd=[[
-            "python3",
+            sys.executable,
             "$(S)/lib/embed/link_shared.py",
             "$(B)/libshitty_vt.so",
             "$(S)/lib/embed/shitty_vt.map",
@@ -1037,7 +1045,7 @@ if linux:
         outputs=["$(B)/shitty_vt.tgz"],
         deps=[shitty_vt_a, shitty_vt_so],
         cmd=[[
-            "python3",
+            sys.executable,
             "$(S)/lib/embed/make_release.py",
             "$(B)/shitty_vt.tgz",
             shitty_version,
@@ -1119,7 +1127,7 @@ python_test_inputs = [
 
 def touch_stamp(path):
     return [
-        "python3",
+        sys.executable,
         "-c",
         f"from pathlib import Path; Path(r'{path}').touch()",
     ]
@@ -1163,7 +1171,7 @@ def make_python_test_groups(name, output_directory, test_binary, test_target, pr
             deps=[test_target, pretty_test_target, toml_dump, example],
             cmd=[
                 [
-                    "python3",
+                    sys.executable,
                     "tst/run_unittest_group.py",
                     f"--group={group_index}",
                     f"--group-count={test_group_count}",
@@ -1218,7 +1226,7 @@ pretty_binary_branding = command(
     outputs=["$(B)/tst/pretty-binary-branding.stamp"],
     deps=[pt],
     cmd=[
-        ["python3", "tst/pretty_binary_branding.py", "$(B)/pt"],
+        [sys.executable, "tst/pretty_binary_branding.py", "$(B)/pt"],
         touch_stamp("$(B)/tst/pretty-binary-branding.stamp"),
     ],
     cwd="$(S)",
@@ -1235,7 +1243,7 @@ production_surface = command(
     outputs=["$(B)/tst/production-surface.stamp"],
     deps=[st, pt],
     cmd=[
-        ["python3", "tst/production_surface.py"],
+        [sys.executable, "tst/production_surface.py"],
         touch_stamp("$(B)/tst/production-surface.stamp"),
     ],
     cwd="$(S)",
@@ -1320,9 +1328,9 @@ parser_fuzz = command(
     outputs=["$(B)/parser-fuzz.stamp"],
     deps=[st_test],
     cmd=[
-        ["python3", "tst/fuzz_parser.py"],
+        [sys.executable, "tst/fuzz_parser.py"],
         [
-            "python3", "-c",
+            sys.executable, "-c",
             "from pathlib import Path; Path(r'$(B)/parser-fuzz.stamp').touch()",
         ],
     ],
@@ -1338,9 +1346,9 @@ vttest_profile = command(
     outputs=["$(B)/vttest.stamp"],
     deps=[st_test],
     cmd=[
-        ["python3", "tst/vttest.py"],
+        [sys.executable, "tst/vttest.py"],
         [
-            "python3", "-c",
+            sys.executable, "-c",
             "from pathlib import Path; Path(r'$(B)/vttest.stamp').touch()",
         ],
     ],
@@ -1368,7 +1376,7 @@ for case in xtermjs_cases:
         outputs=[f"$(B)/tst/xtermjs/{case}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/xtermjs/adapter.py",
             case,
             "tst/xtermjs/xfail.txt",
@@ -1400,7 +1408,7 @@ for case in alacritty_cases:
         outputs=[f"$(B)/tst/alacritty/{case}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/alacritty/adapter.py",
             case,
             "tst/alacritty/xfail.txt",
@@ -1450,7 +1458,7 @@ for case in contour_cases:
         outputs=[f"$(B)/tst/contour/{case}.stamp"],
         deps=[st_test, contour_vttest],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/contour/adapter.py",
             "$(B)/tst/contour/vttest",
             case,
@@ -1478,7 +1486,7 @@ for corpus in ("terminal_corpus", "terminal_parser_corpus"):
         outputs=[f"$(B)/tst/mosh/{corpus}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/mosh/adapter.py",
             corpus,
             "tst/mosh/xfail.txt",
@@ -1507,7 +1515,7 @@ for case in mosh_semantic_cases:
         outputs=[f"$(B)/tst/mosh/semantic/{case}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/mosh/semantic_adapter.py",
             case,
             f"$(B)/tst/mosh/semantic/{case}.stamp",
@@ -1527,9 +1535,9 @@ mosh_semantic_validation = command(
     ],
     outputs=["$(B)/tst/mosh/semantic/catalog.stamp"],
     cmd=[
-        ["python3", "tst/mosh/semantic_validate.py"],
+        [sys.executable, "tst/mosh/semantic_validate.py"],
         [
-            "python3", "-c",
+            sys.executable, "-c",
             "from pathlib import Path; "
             "Path(r'$(B)/tst/mosh/semantic/catalog.stamp').touch()",
         ],
@@ -1557,7 +1565,7 @@ for case in libtsm_semantic_cases:
         outputs=[f"$(B)/tst/libtsm/{case}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/libtsm/semantic_adapter.py",
             case,
             f"$(B)/tst/libtsm/{case}.stamp",
@@ -1577,9 +1585,9 @@ libtsm_semantic_validation = command(
     ],
     outputs=["$(B)/tst/libtsm/catalog.stamp"],
     cmd=[
-        ["python3", "tst/libtsm/semantic_validate.py"],
+        [sys.executable, "tst/libtsm/semantic_validate.py"],
         [
-            "python3", "-c",
+            sys.executable, "-c",
             "from pathlib import Path; "
             "Path(r'$(B)/tst/libtsm/catalog.stamp').touch()",
         ],
@@ -1631,7 +1639,7 @@ for corpus in ("osc-cmin", "parser-cmin", "stream-cmin"):
             outputs=[f"$(B)/tst/ghostty/{name}.stamp"],
             deps=[st_test],
             cmd=[
-                "python3",
+                sys.executable,
                 "tst/ghostty/adapter.py",
                 "tst/ghostty/xfail.txt",
                 f"$(B)/tst/ghostty/{name}.stamp",
@@ -1663,7 +1671,7 @@ for case in ghostty_semantic_cases:
         outputs=[f"$(B)/tst/ghostty/model/{case}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/ghostty/semantic_adapter.py",
             case,
             "tst/ghostty/semantic_xfail.txt",
@@ -1687,9 +1695,9 @@ ghostty_semantic_validation = command(
     ],
     outputs=["$(B)/tst/ghostty/model/catalog.stamp"],
     cmd=[
-        ["python3", "tst/ghostty/semantic_validate.py"],
+        [sys.executable, "tst/ghostty/semantic_validate.py"],
         [
-            "python3", "-c",
+            sys.executable, "-c",
             "from pathlib import Path; "
             "Path(r'$(B)/tst/ghostty/model/catalog.stamp').touch()",
         ],
@@ -1718,7 +1726,7 @@ for case in kitty_cases:
         outputs=[f"$(B)/tst/kitty/{case}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/kitty/adapter.py",
             case,
             "tst/kitty/xfail.txt",
@@ -1742,9 +1750,9 @@ kitty_validation = command(
     ],
     outputs=["$(B)/tst/kitty/catalog.stamp"],
     cmd=[
-        ["python3", "tst/kitty/validate.py"],
+        [sys.executable, "tst/kitty/validate.py"],
         [
-            "python3", "-c",
+            sys.executable, "-c",
             "from pathlib import Path; "
             "Path(r'$(B)/tst/kitty/catalog.stamp').touch()",
         ],
@@ -1773,7 +1781,7 @@ for case in kitty_screen_cases:
         outputs=[f"$(B)/tst/kitty/screen/{case}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/kitty/screen_adapter.py",
             case,
             "tst/kitty/screen_xfail.txt",
@@ -1797,9 +1805,9 @@ kitty_screen_validation = command(
     ],
     outputs=["$(B)/tst/kitty/screen/catalog.stamp"],
     cmd=[
-        ["python3", "tst/kitty/screen_validate.py"],
+        [sys.executable, "tst/kitty/screen_validate.py"],
         [
-            "python3", "-c",
+            sys.executable, "-c",
             "from pathlib import Path; "
             "Path(r'$(B)/tst/kitty/screen/catalog.stamp').touch()",
         ],
@@ -1821,7 +1829,7 @@ kitty_utf8 = command(
     outputs=["$(B)/tst/kitty/utf8.stamp"],
     deps=[st_test],
     cmd=[
-        "python3",
+        sys.executable,
         "tst/kitty/utf8_adapter.py",
         "$(B)/tst/kitty/utf8.stamp",
     ],
@@ -1849,7 +1857,7 @@ for case in kitty_transaction_cases:
         outputs=[f"$(B)/tst/kitty/transaction/{case}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/kitty/transaction_adapter.py",
             case,
             f"$(B)/tst/kitty/transaction/{case}.stamp",
@@ -1871,9 +1879,9 @@ kitty_transaction_validation = command(
     ],
     outputs=["$(B)/tst/kitty/transaction/catalog.stamp"],
     cmd=[
-        ["python3", "tst/kitty/transaction_validate.py"],
+        [sys.executable, "tst/kitty/transaction_validate.py"],
         [
-            "python3", "-c",
+            sys.executable, "-c",
             "from pathlib import Path; "
             "Path(r'$(B)/tst/kitty/transaction/catalog.stamp').touch()",
         ],
@@ -1901,7 +1909,7 @@ for case in vte_cases:
         outputs=[f"$(B)/tst/vte/{case}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/vte/adapter.py",
             case,
             "tst/vte/xfail.txt",
@@ -1926,9 +1934,9 @@ vte_validation = command(
     ],
     outputs=["$(B)/tst/vte/catalog.stamp"],
     cmd=[
-        ["python3", "tst/vte/validate.py"],
+        [sys.executable, "tst/vte/validate.py"],
         [
-            "python3", "-c",
+            sys.executable, "-c",
             "from pathlib import Path; "
             "Path(r'$(B)/tst/vte/catalog.stamp').touch()",
         ],
@@ -1955,7 +1963,7 @@ for case in vte_known_cases:
         outputs=[f"$(B)/tst/vte/known/{case}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/vte/known_adapter.py",
             case,
             f"$(B)/tst/vte/known/{case}.stamp",
@@ -1981,9 +1989,9 @@ vte_known_validation = command(
     ],
     outputs=["$(B)/tst/vte/known/catalog.stamp"],
     cmd=[
-        ["python3", "tst/vte/known_validate.py"],
+        [sys.executable, "tst/vte/known_validate.py"],
         [
-            "python3", "-c",
+            sys.executable, "-c",
             "from pathlib import Path; "
             "Path(r'$(B)/tst/vte/known/catalog.stamp').touch()",
         ],
@@ -2010,7 +2018,7 @@ for case in vte_charset_cases:
         outputs=[f"$(B)/tst/vte/charset/{case}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/vte/charset_adapter.py",
             case,
             f"$(B)/tst/vte/charset/{case}.stamp",
@@ -2033,9 +2041,9 @@ vte_charset_validation = command(
     ],
     outputs=["$(B)/tst/vte/charset/catalog.stamp"],
     cmd=[
-        ["python3", "tst/vte/charset_validate.py"],
+        [sys.executable, "tst/vte/charset_validate.py"],
         [
-            "python3", "-c",
+            sys.executable, "-c",
             "from pathlib import Path; "
             "Path(r'$(B)/tst/vte/charset/catalog.stamp').touch()",
         ],
@@ -2061,7 +2069,7 @@ for case in vte_tabstop_cases:
         outputs=[f"$(B)/tst/vte/tabstops/{case}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/vte/tabstop_adapter.py",
             case,
             f"$(B)/tst/vte/tabstops/{case}.stamp",
@@ -2083,9 +2091,9 @@ vte_tabstop_validation = command(
     ],
     outputs=["$(B)/tst/vte/tabstops/catalog.stamp"],
     cmd=[
-        ["python3", "tst/vte/tabstop_validate.py"],
+        [sys.executable, "tst/vte/tabstop_validate.py"],
         [
-            "python3", "-c",
+            sys.executable, "-c",
             "from pathlib import Path; "
             "Path(r'$(B)/tst/vte/tabstops/catalog.stamp').touch()",
         ],
@@ -2111,7 +2119,7 @@ for case in vte_mode_cases:
         outputs=[f"$(B)/tst/vte/modes/{case}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/vte/mode_adapter.py",
             case,
             f"$(B)/tst/vte/modes/{case}.stamp",
@@ -2133,9 +2141,9 @@ vte_mode_validation = command(
     ],
     outputs=["$(B)/tst/vte/modes/catalog.stamp"],
     cmd=[
-        ["python3", "tst/vte/mode_validate.py"],
+        [sys.executable, "tst/vte/mode_validate.py"],
         [
-            "python3", "-c",
+            sys.executable, "-c",
             "from pathlib import Path; "
             "Path(r'$(B)/tst/vte/modes/catalog.stamp').touch()",
         ],
@@ -2162,7 +2170,7 @@ for case in vte_color_cases:
         outputs=[f"$(B)/tst/vte/color/{case}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/vte/color_adapter.py",
             case,
             f"$(B)/tst/vte/color/{case}.stamp",
@@ -2185,9 +2193,9 @@ vte_color_validation = command(
     ],
     outputs=["$(B)/tst/vte/color/catalog.stamp"],
     cmd=[
-        ["python3", "tst/vte/color_validate.py"],
+        [sys.executable, "tst/vte/color_validate.py"],
         [
-            "python3", "-c",
+            sys.executable, "-c",
             "from pathlib import Path; "
             "Path(r'$(B)/tst/vte/color/catalog.stamp').touch()",
         ],
@@ -2213,7 +2221,7 @@ for case in vte_paste_cases:
         outputs=[f"$(B)/tst/vte/paste/{case}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/vte/paste_adapter.py",
             case,
             f"$(B)/tst/vte/paste/{case}.stamp",
@@ -2235,9 +2243,9 @@ vte_paste_validation = command(
     ],
     outputs=["$(B)/tst/vte/paste/catalog.stamp"],
     cmd=[
-        ["python3", "tst/vte/paste_validate.py"],
+        [sys.executable, "tst/vte/paste_validate.py"],
         [
-            "python3", "-c",
+            sys.executable, "-c",
             "from pathlib import Path; "
             "Path(r'$(B)/tst/vte/paste/catalog.stamp').touch()",
         ],
@@ -2262,7 +2270,7 @@ for case in vte_utf8_cases:
         outputs=[f"$(B)/tst/vte/utf8/{case}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/vte/utf8_adapter.py",
             case,
             f"$(B)/tst/vte/utf8/{case}.stamp",
@@ -2283,9 +2291,9 @@ vte_utf8_validation = command(
     ],
     outputs=["$(B)/tst/vte/utf8/catalog.stamp"],
     cmd=[
-        ["python3", "tst/vte/utf8_validate.py"],
+        [sys.executable, "tst/vte/utf8_validate.py"],
         [
-            "python3", "-c",
+            sys.executable, "-c",
             "from pathlib import Path; "
             "Path(r'$(B)/tst/vte/utf8/catalog.stamp').touch()",
         ],
@@ -2312,7 +2320,7 @@ for case in vte_width_cases:
         outputs=[f"$(B)/tst/vte/width/{case}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/vte/width_adapter.py",
             case,
             "tst/vte/width_xfail.txt",
@@ -2336,9 +2344,9 @@ vte_width_validation = command(
     ],
     outputs=["$(B)/tst/vte/width/catalog.stamp"],
     cmd=[
-        ["python3", "tst/vte/width_validate.py"],
+        [sys.executable, "tst/vte/width_validate.py"],
         [
-            "python3", "-c",
+            sys.executable, "-c",
             "from pathlib import Path; "
             "Path(r'$(B)/tst/vte/width/catalog.stamp').touch()",
         ],
@@ -2368,7 +2376,7 @@ for case in windows_terminal_cases:
         outputs=[f"$(B)/tst/windows_terminal/{case}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/windows_terminal/adapter.py",
             case,
             "tst/windows_terminal/xfail.txt",
@@ -2393,9 +2401,9 @@ windows_terminal_validation = command(
     ],
     outputs=["$(B)/tst/windows_terminal/catalog.stamp"],
     cmd=[
-        ["python3", "tst/windows_terminal/validate.py"],
+        [sys.executable, "tst/windows_terminal/validate.py"],
         [
-            "python3", "-c",
+            sys.executable, "-c",
             "from pathlib import Path; "
             "Path(r'$(B)/tst/windows_terminal/catalog.stamp').touch()",
         ],
@@ -2424,7 +2432,7 @@ for case in wezterm_cases:
         outputs=[f"$(B)/tst/wezterm/{case}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/wezterm/adapter.py",
             case,
             "tst/wezterm/xfail.txt",
@@ -2448,9 +2456,9 @@ wezterm_validation = command(
     ],
     outputs=["$(B)/tst/wezterm/catalog.stamp"],
     cmd=[
-        ["python3", "tst/wezterm/validate.py"],
+        [sys.executable, "tst/wezterm/validate.py"],
         [
-            "python3", "-c",
+            sys.executable, "-c",
             "from pathlib import Path; "
             "Path(r'$(B)/tst/wezterm/catalog.stamp').touch()",
         ],
@@ -2480,7 +2488,7 @@ for case in wezterm_screen_cases:
         outputs=[f"$(B)/tst/wezterm/screen/{case}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/wezterm/screen_adapter.py",
             case,
             "tst/wezterm/screen_xfail.txt",
@@ -2505,9 +2513,9 @@ wezterm_screen_validation = command(
     ],
     outputs=["$(B)/tst/wezterm/screen/catalog.stamp"],
     cmd=[
-        ["python3", "tst/wezterm/screen_validate.py"],
+        [sys.executable, "tst/wezterm/screen_validate.py"],
         [
-            "python3", "-c",
+            sys.executable, "-c",
             "from pathlib import Path; "
             "Path(r'$(B)/tst/wezterm/screen/catalog.stamp').touch()",
         ],
@@ -2536,7 +2544,7 @@ for case in wezterm_selection_cases:
         outputs=[f"$(B)/tst/wezterm/selection/{case}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/wezterm/selection_adapter.py",
             case,
             "tst/wezterm/selection_xfail.txt",
@@ -2559,9 +2567,9 @@ wezterm_selection_validation = command(
     ],
     outputs=["$(B)/tst/wezterm/selection/catalog.stamp"],
     cmd=[
-        ["python3", "tst/wezterm/selection_validate.py"],
+        [sys.executable, "tst/wezterm/selection_validate.py"],
         [
-            "python3", "-c",
+            sys.executable, "-c",
             "from pathlib import Path; "
             "Path(r'$(B)/tst/wezterm/selection/catalog.stamp').touch()",
         ],
@@ -2591,7 +2599,7 @@ for case in wezterm_cursor_cases:
         outputs=[f"$(B)/tst/wezterm/cursor/{case}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/wezterm/cursor_adapter.py",
             case,
             f"$(B)/tst/wezterm/cursor/{case}.stamp",
@@ -2614,9 +2622,9 @@ wezterm_cursor_validation = command(
     ],
     outputs=["$(B)/tst/wezterm/cursor/catalog.stamp"],
     cmd=[
-        ["python3", "tst/wezterm/cursor_validate.py"],
+        [sys.executable, "tst/wezterm/cursor_validate.py"],
         [
-            "python3", "-c",
+            sys.executable, "-c",
             "from pathlib import Path; "
             "Path(r'$(B)/tst/wezterm/cursor/catalog.stamp').touch()",
         ],
@@ -2646,7 +2654,7 @@ for case in wezterm_damage_cases:
         outputs=[f"$(B)/tst/wezterm/damage/{case}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/wezterm/damage_adapter.py",
             case,
             f"$(B)/tst/wezterm/damage/{case}.stamp",
@@ -2669,9 +2677,9 @@ wezterm_damage_validation = command(
     ],
     outputs=["$(B)/tst/wezterm/damage/catalog.stamp"],
     cmd=[
-        ["python3", "tst/wezterm/damage_validate.py"],
+        [sys.executable, "tst/wezterm/damage_validate.py"],
         [
-            "python3", "-c",
+            sys.executable, "-c",
             "from pathlib import Path; "
             "Path(r'$(B)/tst/wezterm/damage/catalog.stamp').touch()",
         ],
@@ -2703,7 +2711,7 @@ for case in wezterm_history_cases:
         outputs=[f"$(B)/tst/wezterm/history/{case}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/wezterm/history_adapter.py",
             case,
             f"$(B)/tst/wezterm/history/{case}.stamp",
@@ -2728,9 +2736,9 @@ wezterm_history_validation = command(
     ],
     outputs=["$(B)/tst/wezterm/history/catalog.stamp"],
     cmd=[
-        ["python3", "tst/wezterm/history_validate.py"],
+        [sys.executable, "tst/wezterm/history_validate.py"],
         [
-            "python3", "-c",
+            sys.executable, "-c",
             "from pathlib import Path; "
             "Path(r'$(B)/tst/wezterm/history/catalog.stamp').touch()",
         ],
@@ -2759,7 +2767,7 @@ for case in wezterm_semantic_cases:
         outputs=[f"$(B)/tst/wezterm/semantic/{case}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/wezterm/semantic_adapter.py",
             case,
             "tst/wezterm/semantic_xfail.txt",
@@ -2781,9 +2789,9 @@ wezterm_semantic_validation = command(
     ],
     outputs=["$(B)/tst/wezterm/semantic/catalog.stamp"],
     cmd=[
-        ["python3", "tst/wezterm/semantic_validate.py"],
+        [sys.executable, "tst/wezterm/semantic_validate.py"],
         [
-            "python3", "-c",
+            sys.executable, "-c",
             "from pathlib import Path; "
             "Path(r'$(B)/tst/wezterm/semantic/catalog.stamp').touch()",
         ],
@@ -2811,7 +2819,7 @@ for case in wezterm_hyperlink_cases:
         outputs=[f"$(B)/tst/wezterm/hyperlink/{case}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/wezterm/hyperlink_adapter.py",
             case,
             f"$(B)/tst/wezterm/hyperlink/{case}.stamp",
@@ -2832,9 +2840,9 @@ wezterm_hyperlink_validation = command(
     ],
     outputs=["$(B)/tst/wezterm/hyperlink/catalog.stamp"],
     cmd=[
-        ["python3", "tst/wezterm/hyperlink_validate.py"],
+        [sys.executable, "tst/wezterm/hyperlink_validate.py"],
         [
-            "python3", "-c",
+            sys.executable, "-c",
             "from pathlib import Path; "
             "Path(r'$(B)/tst/wezterm/hyperlink/catalog.stamp').touch()",
         ],
@@ -2863,7 +2871,7 @@ for case in wezterm_metadata_cases:
         outputs=[f"$(B)/tst/wezterm/metadata/{case}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/wezterm/metadata_adapter.py",
             case,
             f"$(B)/tst/wezterm/metadata/{case}.stamp",
@@ -2885,9 +2893,9 @@ wezterm_metadata_validation = command(
     ],
     outputs=["$(B)/tst/wezterm/metadata/catalog.stamp"],
     cmd=[
-        ["python3", "tst/wezterm/metadata_validate.py"],
+        [sys.executable, "tst/wezterm/metadata_validate.py"],
         [
-            "python3", "-c",
+            sys.executable, "-c",
             "from pathlib import Path; "
             "Path(r'$(B)/tst/wezterm/metadata/catalog.stamp').touch()",
         ],
@@ -2916,7 +2924,7 @@ for case in konsole_cases:
         outputs=[f"$(B)/tst/konsole/{case}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/konsole/adapter.py",
             case,
             "tst/konsole/xfail.txt",
@@ -2940,9 +2948,9 @@ konsole_validation = command(
     ],
     outputs=["$(B)/tst/konsole/catalog.stamp"],
     cmd=[
-        ["python3", "tst/konsole/validate.py"],
+        [sys.executable, "tst/konsole/validate.py"],
         [
-            "python3", "-c",
+            sys.executable, "-c",
             "from pathlib import Path; "
             "Path(r'$(B)/tst/konsole/catalog.stamp').touch()",
         ],
@@ -2969,7 +2977,7 @@ for case in konsole_semantic_cases:
         outputs=[f"$(B)/tst/konsole/semantic/{case}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/konsole/semantic_adapter.py",
             case,
             f"$(B)/tst/konsole/semantic/{case}.stamp",
@@ -2989,9 +2997,9 @@ konsole_semantic_validation = command(
     ],
     outputs=["$(B)/tst/konsole/semantic/catalog.stamp"],
     cmd=[
-        ["python3", "tst/konsole/semantic_validate.py"],
+        [sys.executable, "tst/konsole/semantic_validate.py"],
         [
-            "python3", "-c",
+            sys.executable, "-c",
             "from pathlib import Path; "
             "Path(r'$(B)/tst/konsole/semantic/catalog.stamp').touch()",
         ],
@@ -3018,7 +3026,7 @@ for case in konsole_vt_cases:
         outputs=[f"$(B)/tst/konsole/vt/{case}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/konsole/vt_adapter.py",
             case,
             f"$(B)/tst/konsole/vt/{case}.stamp",
@@ -3038,9 +3046,9 @@ konsole_vt_validation = command(
     ],
     outputs=["$(B)/tst/konsole/vt/catalog.stamp"],
     cmd=[
-        ["python3", "tst/konsole/vt_validate.py"],
+        [sys.executable, "tst/konsole/vt_validate.py"],
         [
-            "python3", "-c",
+            sys.executable, "-c",
             "from pathlib import Path; "
             "Path(r'$(B)/tst/konsole/vt/catalog.stamp').touch()",
         ],
@@ -3071,7 +3079,7 @@ for case in konsole_width_cases:
         outputs=[f"$(B)/tst/konsole/width/{case}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/konsole/width_adapter.py",
             case,
             f"$(B)/tst/konsole/width/{case}.stamp",
@@ -3095,9 +3103,9 @@ konsole_width_validation = command(
     ],
     outputs=["$(B)/tst/konsole/width/catalog.stamp"],
     cmd=[
-        ["python3", "tst/konsole/width_validate.py"],
+        [sys.executable, "tst/konsole/width_validate.py"],
         [
-            "python3", "-c",
+            sys.executable, "-c",
             "from pathlib import Path; "
             "Path(r'$(B)/tst/konsole/width/catalog.stamp').touch()",
         ],
@@ -3125,7 +3133,7 @@ for case in konsole_keyboard_cases:
         outputs=[f"$(B)/tst/konsole/keyboard/{case}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/konsole/keyboard_adapter.py",
             case,
             f"$(B)/tst/konsole/keyboard/{case}.stamp",
@@ -3146,9 +3154,9 @@ konsole_keyboard_validation = command(
     ],
     outputs=["$(B)/tst/konsole/keyboard/catalog.stamp"],
     cmd=[
-        ["python3", "tst/konsole/keyboard_validate.py"],
+        [sys.executable, "tst/konsole/keyboard_validate.py"],
         [
-            "python3", "-c",
+            sys.executable, "-c",
             "from pathlib import Path; "
             "Path(r'$(B)/tst/konsole/keyboard/catalog.stamp').touch()",
         ],
@@ -3176,7 +3184,7 @@ for case in konsole_pty_cases:
         outputs=[f"$(B)/tst/konsole/pty/{case}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/konsole/pty_adapter.py",
             case,
             f"$(B)/tst/konsole/pty/{case}.stamp",
@@ -3197,9 +3205,9 @@ konsole_pty_validation = command(
     ],
     outputs=["$(B)/tst/konsole/pty/catalog.stamp"],
     cmd=[
-        ["python3", "tst/konsole/pty_validate.py"],
+        [sys.executable, "tst/konsole/pty_validate.py"],
         [
-            "python3", "-c",
+            sys.executable, "-c",
             "from pathlib import Path; "
             "Path(r'$(B)/tst/konsole/pty/catalog.stamp').touch()",
         ],
@@ -3254,7 +3262,7 @@ for shard_index, start in enumerate(
         outputs=[f"$(B)/tst/tmux/{name}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/tmux/adapter.py",
             "tst/tmux/xfail.txt",
             f"$(B)/tst/tmux/{name}.stamp",
@@ -3280,7 +3288,7 @@ for member in tmux_dictionary_members:
         outputs=[f"$(B)/tst/tmux/input_dictionary_{index}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/tmux/adapter.py",
             "tst/tmux/xfail.txt",
             f"$(B)/tst/tmux/input_dictionary_{index}.stamp",
@@ -3315,7 +3323,7 @@ for case_id, _, _ in wraptest_cases:
         outputs=[f"$(B)/tst/wraptest/{case_id}.stamp"],
         deps=[st_test, wraptest_helper],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/wraptest/adapter.py",
             "$(B)/tst/wraptest/wraptest",
             case_id,
@@ -3372,9 +3380,9 @@ tack_validation = command(
     ],
     outputs=["$(B)/tst/tack/catalog.stamp"],
     cmd=[
-        ["python3", "tst/tack/validate.py"],
+        [sys.executable, "tst/tack/validate.py"],
         [
-            "python3", "-c",
+            sys.executable, "-c",
             "from pathlib import Path; "
             "Path(r'$(B)/tst/tack/catalog.stamp').touch()",
         ],
@@ -3396,7 +3404,7 @@ for capability in tack_cases:
         outputs=[f"$(B)/tst/tack/{capability}.stamp"],
         deps=[st_test, tack_program],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/tack/adapter.py",
             "$(B)/tst/tack/tack",
             capability,
@@ -3448,7 +3456,7 @@ for category, start, end in ucs_detect_shards:
         outputs=[f"$(B)/tst/ucs_detect/{name}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/ucs_detect/adapter.py",
             category,
             str(start),
@@ -3476,9 +3484,9 @@ ucs_detect_validation = command(
     ],
     outputs=["$(B)/tst/ucs_detect/catalog.stamp"],
     cmd=[
-        ["python3", "tst/ucs_detect/validate.py"],
+        [sys.executable, "tst/ucs_detect/validate.py"],
         [
-            "python3", "-c",
+            sys.executable, "-c",
             "from pathlib import Path; "
             "Path(r'$(B)/tst/ucs_detect/catalog.stamp').touch()",
         ],
@@ -3507,7 +3515,7 @@ for case in ucs_detect_probe_cases:
         outputs=[f"$(B)/tst/ucs_detect/probes/{case}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/ucs_detect/probe_adapter.py",
             case,
             "tst/ucs_detect/probe_xfail.txt",
@@ -3541,7 +3549,7 @@ for case in vtebench_cases:
         outputs=[f"$(B)/tst/vtebench/{case}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/vtebench/adapter.py",
             case,
             "tst/vtebench/xfail.txt",
@@ -3583,7 +3591,7 @@ for case in libvterm_cases:
         outputs=[f"$(B)/tst/libvterm/{name}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/libvterm/adapter.py",
             case,
             "tst/libvterm/xfail.txt",
@@ -3626,7 +3634,7 @@ for case in xterm_vttests_cases:
         outputs=[f"$(B)/tst/xterm_vttests/{name}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/xterm_vttests/adapter.py",
             case,
             "tst/xterm_vttests/xfail.txt",
@@ -3671,7 +3679,7 @@ for case in esctest_cases:
         outputs=[f"$(B)/tst/esctest/{name}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/esctest/adapter.py",
             case,
             "tst/esctest/xfail.txt",
@@ -3714,9 +3722,9 @@ termless_validation = command(
     ],
     outputs=["$(B)/tst/termless/catalog.stamp"],
     cmd=[
-        ["python3", "tst/termless/validate.py"],
+        [sys.executable, "tst/termless/validate.py"],
         [
-            "python3", "-c",
+            sys.executable, "-c",
             "from pathlib import Path; "
             "Path(r'$(B)/tst/termless/catalog.stamp').touch()",
         ],
@@ -3741,7 +3749,7 @@ for case_id, _, _ in termless_cases:
         outputs=[f"$(B)/tst/termless/{case_id}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/termless/adapter.py",
             case_id,
             "tst/termless/xfail.txt",
@@ -3769,9 +3777,9 @@ realworld_validation = command(
     ],
     outputs=["$(B)/tst/realworld/catalog.stamp"],
     cmd=[
-        ["python3", "tst/realworld/validate.py"],
+        [sys.executable, "tst/realworld/validate.py"],
         [
-            "python3", "-c",
+            sys.executable, "-c",
             "from pathlib import Path; "
             "Path(r'$(B)/tst/realworld/catalog.stamp').touch()",
         ],
@@ -3797,7 +3805,7 @@ for case in realworld_cases:
         outputs=[f"$(B)/tst/realworld/{case}.stamp"],
         deps=[st_test],
         cmd=[
-            "python3",
+            sys.executable,
             "tst/realworld/adapter.py",
             case,
             f"$(B)/tst/realworld/{case}.stamp",
@@ -3825,7 +3833,7 @@ for group_index in range(keyboard_product_group_count):
         deps=[st_test],
         cmd=[
             [
-                "python3",
+                sys.executable,
                 "tst/keyboard_layout_product.py",
                 f"--group={group_index}",
                 f"--group-count={keyboard_product_group_count}",
@@ -3857,7 +3865,7 @@ vterm_boundary = command(
     ],
     outputs=["$(B)/vterm-boundary.stamp"],
     cmd=[
-        "python3",
+        sys.executable,
         "$(S)/lib/vterm/check_includes.py",
         "$(S)/lib/vterm",
         "$(B)/vterm-boundary.stamp",

@@ -1,8 +1,7 @@
 #pragma once
 
+#include <std/sys/iovec.h>
 #include <std/sys/types.h>
-
-struct iovec;
 
 namespace stl {
     class Input;

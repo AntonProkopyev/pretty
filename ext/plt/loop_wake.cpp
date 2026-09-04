@@ -1,20 +1,51 @@
 #include "loop_wake.h"
 
 #include "poller.h"
+#include "poller_loop.h"
 
+#include <std/dbg/insist.h>
 #include <std/lib/buffer.h>
 #include <std/mem/obj_pool.h>
 #include <std/str/view.h>
 #include <std/sys/throw.h>
 
-#include <errno.h>
-#include <fcntl.h>
-#include <unistd.h>
+#if defined(_WIN32)
+    #define WIN32_LEAN_AND_MEAN
+    #define NOMINMAX
+    #include <windows.h>
+#else
+    #include <errno.h>
+    #include <fcntl.h>
+    #include <unistd.h>
+#endif
 
 using namespace plt;
 using namespace stl;
 
 namespace {
+#if defined(_WIN32)
+    struct EventLoopWake final: public LoopWake {
+        explicit EventLoopWake(HANDLE event_)
+            : event(event_)
+        {
+        }
+
+        ~EventLoopWake() noexcept {
+            CloseHandle(event);
+        }
+
+        EventLoopWake(const EventLoopWake&) = delete;
+        EventLoopWake& operator=(const EventLoopWake&) = delete;
+        EventLoopWake(EventLoopWake&&) = delete;
+        EventLoopWake& operator=(EventLoopWake&&) = delete;
+
+        void signal() override {
+            STD_INSIST(SetEvent(event) != 0);
+        }
+
+        HANDLE const event;
+    };
+#else
     struct PipeLoopWake final: public LoopWake, public PollCallback {
         PipeLoopWake(Poller& poller_, TimerCallback& callback_)
             : poller(poller_)
@@ -60,8 +91,16 @@ namespace {
         int readFd = -1;
         int writeFd = -1;
     };
+#endif
 }
 
-LoopWake* LoopWake::create(ObjPool& owner, Poller& poller, TimerCallback& callback) {
+LoopWake* LoopWake::create(ObjPool& owner, PollerLoop& poller, TimerCallback& callback) {
+#if defined(_WIN32)
+    HANDLE const event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    STD_INSIST(event != nullptr);
+    poller.armNative(event, callback);
+    return owner.make<EventLoopWake>(event);
+#else
     return owner.make<PipeLoopWake>(poller, callback);
+#endif
 }

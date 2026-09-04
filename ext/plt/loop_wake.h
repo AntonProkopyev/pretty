@@ -5,7 +5,7 @@ namespace stl {
 }
 
 namespace plt {
-    struct Poller;
+    struct PollerLoop;
     struct TimerCallback;
 
     // A cross-thread doorbell for the platform loop. signal() may be called
@@ -17,6 +17,6 @@ namespace plt {
 
         // The portable pipe-backed doorbell for poll-driven backends;
         // Platform::createLoopWake picks the loop's native mechanism.
-        static LoopWake* create(stl::ObjPool& owner, Poller& poller, TimerCallback& callback);
+        static LoopWake* create(stl::ObjPool& owner, PollerLoop& poller, TimerCallback& callback);
     };
 }

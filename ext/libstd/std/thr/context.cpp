@@ -2,6 +2,7 @@
 
 #include <std/mem/new.h>
 #include <std/dbg/insist.h>
+#include <std/sys/crt.h>
 #include <std/thr/runable.h>
 #include <std/alg/exchange.h>
 
@@ -88,6 +89,54 @@ namespace {
 }
 
 void ContextImpl::swapContext(u64*, u64*) {
+#if defined(_WIN32)
+    __asm__(
+        "pushq %rbx\n\t"
+        "pushq %rbp\n\t"
+        "pushq %rdi\n\t"
+        "pushq %rsi\n\t"
+        "pushq %r12\n\t"
+        "pushq %r13\n\t"
+        "pushq %r14\n\t"
+        "pushq %r15\n\t"
+        "subq $176, %rsp\n\t"
+        "movdqu %xmm6,   0(%rsp)\n\t"
+        "movdqu %xmm7,  16(%rsp)\n\t"
+        "movdqu %xmm8,  32(%rsp)\n\t"
+        "movdqu %xmm9,  48(%rsp)\n\t"
+        "movdqu %xmm10, 64(%rsp)\n\t"
+        "movdqu %xmm11, 80(%rsp)\n\t"
+        "movdqu %xmm12, 96(%rsp)\n\t"
+        "movdqu %xmm13, 112(%rsp)\n\t"
+        "movdqu %xmm14, 128(%rsp)\n\t"
+        "movdqu %xmm15, 144(%rsp)\n\t"
+        "stmxcsr 160(%rsp)\n\t"
+        "fnstcw 164(%rsp)\n\t"
+        "movq %rsp, (%rcx)\n\t"
+        "movq (%rdx), %rsp\n\t"
+        "ldmxcsr 160(%rsp)\n\t"
+        "fldcw 164(%rsp)\n\t"
+        "movdqu   0(%rsp), %xmm6\n\t"
+        "movdqu  16(%rsp), %xmm7\n\t"
+        "movdqu  32(%rsp), %xmm8\n\t"
+        "movdqu  48(%rsp), %xmm9\n\t"
+        "movdqu  64(%rsp), %xmm10\n\t"
+        "movdqu  80(%rsp), %xmm11\n\t"
+        "movdqu  96(%rsp), %xmm12\n\t"
+        "movdqu 112(%rsp), %xmm13\n\t"
+        "movdqu 128(%rsp), %xmm14\n\t"
+        "movdqu 144(%rsp), %xmm15\n\t"
+        "addq $176, %rsp\n\t"
+        "popq %r15\n\t"
+        "popq %r14\n\t"
+        "popq %r13\n\t"
+        "popq %r12\n\t"
+        "popq %rsi\n\t"
+        "popq %rdi\n\t"
+        "popq %rbp\n\t"
+        "popq %rbx\n\t"
+        "retq\n\t");
+#else
     __asm__(
         "pushq %rbx\n\t"
         "pushq %rbp\n\t"
@@ -104,6 +153,7 @@ void ContextImpl::swapContext(u64*, u64*) {
         "popq %rbp\n\t"
         "popq %rbx\n\t"
         "retq\n\t");
+#endif
 }
 
 // The handoff register must survive until the asm reads it: profile
@@ -125,6 +175,29 @@ ContextImpl::ContextImpl(void* stackPtr, size_t stackSize, Runable& entry) noexc
 
     auto top = (u64*)(((uintptr_t)stackPtr + stackSize) & ~(uintptr_t)15);
 
+#if defined(_WIN32)
+    // Windows x64 reserves 32 bytes of caller-owned shadow space above the
+    // synthetic return address. The restore frame below contains ten XMM
+    // registers, MXCSR, x87 control state and eight non-volatile GPRs.
+    *--top = 0; // shadow
+    *--top = 0;
+    *--top = 0;
+    *--top = 0;
+    *--top = 0; // synthetic return address
+    *--top = reinterpret_cast<u64>(trampoline);
+    *--top = reinterpret_cast<u64>(this); // rbx, trampoline self
+    *--top = 0; // rbp
+    *--top = 0; // rdi
+    *--top = 0; // rsi
+    *--top = 0; // r12
+    *--top = 0; // r13
+    *--top = 0; // r14
+    *--top = 0; // r15
+    top -= 22;
+    memZero(top, top + 22);
+    // MXCSR 0x1f80 and x87 control word 0x037f in their restore slots.
+    top[20] = 0x0000037f00001f80ULL;
+#else
     // after swapContext pops 6 regs and does ret (7 * 8 = 56 bytes),
     // rsp = top - 8 which is 8-mod-16, matching the ABI for function entry
     *--top = 0;
@@ -135,6 +208,7 @@ ContextImpl::ContextImpl(void* stackPtr, size_t stackSize, Runable& entry) noexc
     *--top = 0;         // r13
     *--top = 0;         // r14
     *--top = 0;         // r15
+#endif
 
     rsp = (u64)top;
     initStack(stackPtr, stackSize);

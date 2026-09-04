@@ -9,7 +9,11 @@
 #include <std/mem/small_obj_allocator.h>
 #include <std/dbg/assert.h>
 
-#include <alloca.h>
+#if defined(_WIN32)
+    #include <malloc.h>
+#else
+    #include <alloca.h>
+#endif
 #include <new>
 
 using namespace plt;
@@ -274,7 +278,13 @@ SchedulerImpl::SchedulerImpl(ObjPool& owner, Poller& poller_)
 void SchedulerImpl::resume(FiberImpl& fiber) {
     // The host context lives on the resumer's stack frame, which stays alive
     // for as long as the fiber runs; nested resumes each bring their own.
-    Context* const host = Context::create(alloca(Context::implSize()));
+    Context* const host = Context::create(
+#if defined(_WIN32)
+        _alloca(Context::implSize())
+#else
+        alloca(Context::implSize())
+#endif
+    );
     FiberImpl* const previous = active;
     active = &fiber;
     fiber.data->resumeTo = host;

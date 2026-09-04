@@ -13,13 +13,12 @@ import ast
 import base64
 import concurrent.futures
 import dataclasses
-import errno
-import fcntl
 import glob as globlib
 import hashlib
 import importlib.util
 import json
 import os
+import platform
 import re
 import shlex
 import shutil
@@ -37,6 +36,11 @@ from collections import defaultdict, deque
 from pathlib import Path
 from typing import Any, Iterable
 
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
+
 
 S = "$(S)"
 B = "$(B)"
@@ -51,12 +55,45 @@ ANSI_COLORS = {
 
 
 def native_target() -> str:
+    if os.name == "nt":
+        machine = platform.machine().lower()
+        machine = {"amd64": "x86_64", "arm64": "aarch64"}.get(machine, machine)
+        return f"{machine}-w64-windows-gnu"
     target = sysconfig.get_config_var("HOST_GNU_TYPE")
     if isinstance(target, str) and target:
         return target
     machine = os.uname().machine
     machine = {"amd64": "x86_64", "arm64": "aarch64"}.get(machine, machine)
     return f"{machine}-unknown-linux-gnu"
+
+
+if os.name == "nt":
+    class FileLock:
+        def __init__(self, descriptor: int):
+            self._descriptor = descriptor
+
+        def __enter__(self):
+            if os.fstat(self._descriptor).st_size == 0:
+                os.write(self._descriptor, b"\0")
+            os.lseek(self._descriptor, 0, os.SEEK_SET)
+            msvcrt.locking(self._descriptor, msvcrt.LK_LOCK, 1)
+            return self
+
+        def __exit__(self, _kind, _error, _traceback):
+            os.lseek(self._descriptor, 0, os.SEEK_SET)
+            msvcrt.locking(self._descriptor, msvcrt.LK_UNLCK, 1)
+            return False
+else:
+    class FileLock:
+        def __init__(self, descriptor: int):
+            self._descriptor = descriptor
+
+        def __enter__(self):
+            fcntl.flock(self._descriptor, fcntl.LOCK_EX)
+            return self
+
+        def __exit__(self, _kind, _error, _traceback):
+            return False
 
 
 class BuildError(RuntimeError):
@@ -191,6 +228,20 @@ def _validate_descr(descr: str) -> None:
         raise BuildError(f"descr must be exactly two ASCII letters: {descr!r}")
 
 
+def _atomic_copy(source: Path, target: Path) -> Path:
+    temporary = target.with_name("." + target.name + "." + uuid.uuid4().hex)
+    try:
+        shutil.copy2(source, temporary)
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return target
+
+
+def _windows_target(target: str) -> bool:
+    return "windows" in target
+
+
 @dataclasses.dataclass(eq=False)
 class Node:
     inputs: list[str]
@@ -296,6 +347,7 @@ class BuildContext:
         self.host_cppflags = shlex.split(os.environ.get("HOST_CPPFLAGS", ""))
         self.cc = os.environ.get("CC", "cc")
         self.cxx = os.environ.get("CXX", "c++")
+        self.rc = os.environ.get("RC", "llvm-rc")
         self.ar = os.environ.get("AR") or shutil.which("ar") or shutil.which("llvm-ar") or "ar"
         self.tool_paths: dict[str, str] = {}
         self.tool_kinds: dict[str, str] = {}
@@ -492,6 +544,14 @@ class BuildContext:
                 sources.append(source)
             else:
                 sources.append(_source_path(source))
+        normalized_output = _output_path(output) if output else None
+        if (
+            kind == "program"
+            and normalized_output is not None
+            and _windows_target(self.target)
+            and not normalized_output.lower().endswith(".exe")
+        ):
+            normalized_output += ".exe"
         target = Target(
             kind, name=name, srcs=sources,
             deps=_items(deps),
@@ -499,7 +559,7 @@ class BuildContext:
             public_cflags=_items(public_cflags),
             public_cxxflags=_items(public_cxxflags),
             public_cppflags=_items(public_cppflags),
-            ldflags=_items(ldflags), output=_output_path(output) if output else None,
+            ldflags=_items(ldflags), output=normalized_output,
             linker=linker,
         )
         self._validate_deps(target)
@@ -555,6 +615,7 @@ class BuildContext:
         build_module.flags = self.flags
         build_module.host = self.host
         build_module.target = self.target
+        build_module.compiler_command = self._compiler_command
         for name in ("cflags", "cxxflags", "cppflags", "ldflags"):
             setattr(build_module, name, getattr(self, name).copy())
         build_module.have_header = self.have_header
@@ -1160,6 +1221,9 @@ class BuildContext:
                 src = source
                 source_inputs = []
             ext = Path(src).suffix.lower()
+            resource = ext == ".rc"
+            if resource and not _windows_target(self.target):
+                raise BuildError(f"resource source requires a Windows target: {src}")
             cxx = ext in (".cc", ".cpp", ".cxx", ".c++", ".mm")
             uses_cxx |= cxx
             compiler = self.cxx if cxx else self.cc
@@ -1181,7 +1245,7 @@ class BuildContext:
             include_roots = _uniq([*global_includes, *self._include_roots_from_flags(common)])
             rel = src.replace(S + "/", "").replace(B + "/", "generated/")
             rel = re.sub(r"[^A-Za-z0-9_./+-]", "_", rel)
-            obj = f"{B}/obj/{target.name}/{rel}.o"
+            obj = f"{B}/obj/{target.name}/{rel}{'.res' if resource else '.o'}"
             deps: list[Node] = []
             inputs = [src]
             for source_input in source_inputs:
@@ -1197,19 +1261,26 @@ class BuildContext:
                 if producer is None:
                     raise BuildError(f"no producer for generated source {src}")
                 deps.append(producer)
-            node = Node(
-                inputs=inputs, outputs=[obj],
-                commands=[[
+            command = (
+                [self.rc, "/fo", obj, src]
+                if resource
+                else [
                     *self._compiler_command(compiler),
                     *common,
                     "-c",
                     src,
                     "-o",
                     obj,
-                ]],
+                ]
+            )
+            node = Node(
+                inputs=inputs, outputs=[obj],
+                commands=[command],
                 deps=deps,
-                descr="CC", color="green", include_roots=include_roots,
-                scan_sources=src.startswith(S + "/") or os.path.isabs(src),
+                descr="RC" if resource else "CC", color="green",
+                include_roots=[] if resource else include_roots,
+                scan_sources=(not resource
+                              and (src.startswith(S + "/") or os.path.isabs(src))),
             )
             for source_input in inputs:
                 if source_input.startswith(S + "/") or os.path.isabs(source_input):
@@ -1222,7 +1293,8 @@ class BuildContext:
             command = [self.ar, "rcs", output, *[node.outputs[0] for node in objects]]
             root = Node([], [output], [command], deps=objects, descr="AR", color="light-red")
         else:
-            output = target.output or f"{B}/{target.name}"
+            suffix = ".exe" if _windows_target(self.target) else ""
+            output = target.output or f"{B}/{target.name}{suffix}"
             libraries = self._link_libraries(target.deps)
             lib_nodes = [lib.root for lib in libraries if lib.root is not None]
             other_nodes = [dep.root for dep in target.deps if dep.root is not None and dep.kind != "library"]
@@ -1365,33 +1437,61 @@ class BuildContext:
         return Path(path)
 
     def publish(self, targets: Iterable[Target]) -> None:
-        publications: list[tuple[Path, str]] = []
+        publications: list[tuple[Path, str, Path, Path]] = []
+        marker_root = self.build_root / ".published"
         for target in _uniq(targets):
             if not target.name or Path(target.name).name != target.name:
                 raise BuildError(f"target name cannot be published in source root: {target.name!r}")
             if target.root is None or not target.root.outputs:
                 raise BuildError(f"target has no output to publish: {target.name}")
             link = self.source_root / target.name
+            marker = marker_root / target.name
             try:
                 info = link.lstat()
             except FileNotFoundError:
                 pass
             else:
                 if not stat.S_ISLNK(info.st_mode):
-                    # A real file/dir shares this target's name: skip the
-                    # convenience symlink rather than clobbering source data.
-                    print(f"build: not publishing {target.name}: {link} exists",
-                          file=sys.stderr)
-                    continue
+                    try:
+                        recorded = marker.read_text()
+                        current = hashlib.sha256(link.read_bytes()).hexdigest()
+                    except OSError:
+                        recorded = ""
+                        current = "!"
+                    if recorded != current:
+                        # A real file/dir shares this target's name: skip the
+                        # publication rather than clobbering source data.
+                        print(f"build: not publishing {target.name}: {link} exists",
+                              file=sys.stderr)
+                        continue
             output = self.physical(target.root.outputs[0])
-            publications.append((link, os.path.relpath(output, self.source_root)))
-        for link, relative in publications:
+            publications.append((
+                link,
+                os.path.relpath(output, self.source_root),
+                output,
+                marker,
+            ))
+        for link, relative, output, marker in publications:
             temporary = link.with_name("." + link.name + "." + uuid.uuid4().hex)
+            copied = False
             try:
-                os.symlink(relative, temporary)
+                try:
+                    os.symlink(relative, temporary)
+                except OSError:
+                    temporary.unlink(missing_ok=True)
+                    try:
+                        os.link(output, temporary)
+                    except OSError:
+                        shutil.copy2(output, temporary)
+                    copied = True
                 os.replace(temporary, link)
             finally:
                 temporary.unlink(missing_ok=True)
+            if copied:
+                marker.parent.mkdir(parents=True, exist_ok=True)
+                marker.write_text(hashlib.sha256(link.read_bytes()).hexdigest())
+            else:
+                marker.unlink(missing_ok=True)
 
     def source_hash(self, path: str) -> str:
         cached = self.file_hashes.get(path)
@@ -2114,26 +2214,26 @@ class Executor:
         locks.mkdir(parents=True, exist_ok=True)
         fd = os.open(locks / node.uid, os.O_CREAT | os.O_RDWR, 0o600)
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX)
-            work.mkdir(parents=True, exist_ok=True)
-            try:
-                if not self.strace and self._cached(node.uid):
-                    return
-                self._remove_contents(work)
-                for dep in node.deps:
-                    assert dep.uid is not None
-                    self._restore(dep.uid, work, symlink=False)
-                for output in node.outputs:
-                    self.context.physical(output, work).parent.mkdir(parents=True, exist_ok=True)
-                if self.verbose:
-                    self._report(f"RUN  {node.descr} {self._node_name(node)}")
-                for command in node.commands:
-                    self._run_command(node, command, work)
-                if store_result:
-                    self._store(node, work)
-                self._progress(node)
-            finally:
-                self._discard_contents(work)
+            with FileLock(fd):
+                work.mkdir(parents=True, exist_ok=True)
+                try:
+                    if not self.strace and self._cached(node.uid):
+                        return
+                    self._remove_contents(work)
+                    for dep in node.deps:
+                        assert dep.uid is not None
+                        self._restore(dep.uid, work, symlink=False)
+                    for output in node.outputs:
+                        self.context.physical(output, work).parent.mkdir(parents=True, exist_ok=True)
+                    if self.verbose:
+                        self._report(f"RUN  {node.descr} {self._node_name(node)}")
+                    for command in node.commands:
+                        self._run_command(node, command, work)
+                    if store_result:
+                        self._store(node, work)
+                    self._progress(node)
+                finally:
+                    self._discard_contents(work)
         finally:
             os.close(fd)
 
@@ -2316,17 +2416,8 @@ class Executor:
             os.link(physical, destination)
         except FileExistsError:
             pass
-        except OSError as exc:
-            if exc.errno != errno.EXDEV:
-                raise
-            temporary = destination.with_name("." + destination.name + "." + uuid.uuid4().hex)
-            shutil.copy2(physical, temporary)
-            try:
-                os.link(temporary, destination)
-            except FileExistsError:
-                pass
-            finally:
-                temporary.unlink(missing_ok=True)
+        except OSError:
+            _atomic_copy(physical, destination)
         manifest[symbolic] = {"cas": digest, "mode": mode}
 
     @staticmethod
@@ -2349,13 +2440,23 @@ class Executor:
                 else:
                     source = self._cas_path(entry["cas"])
                     if symlink:
-                        self._replace_symlink(str(source.resolve()), target)
+                        try:
+                            self._replace_symlink(str(source.resolve()), target)
+                        except OSError:
+                            self._unlink(target)
+                            try:
+                                os.link(source, target)
+                            except OSError:
+                                _atomic_copy(source, target)
                     else:
                         self._unlink(target)
                         try:
                             os.link(source, target)
                         except OSError:
-                            os.symlink(source.resolve(), target)
+                            try:
+                                os.symlink(source.resolve(), target)
+                            except OSError:
+                                _atomic_copy(source, target)
         except BaseException:
             path.unlink(missing_ok=True)
             raise
@@ -2625,6 +2726,8 @@ def main(argv: list[str] | None = None) -> int:
 
 def supervised_main(argv: list[str] | None = None) -> int:
     """Keep signal handling outside the process group that does the work."""
+    if os.name == "nt":
+        return main(argv)
     watched = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT)
     old_mask = signal.pthread_sigmask(signal.SIG_BLOCK, watched)
     pid = os.fork()
