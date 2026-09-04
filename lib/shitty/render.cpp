@@ -13,7 +13,7 @@
 
 #if defined(HAVE_METAL_RENDERER)
     #include "render_metal.h"
-#elif defined(HAVE_VULKAN_WAYLAND)
+#elif defined(HAVE_VULKAN_RENDERER)
     #include "render_vk.h"
 #else
     #error No renderer backend selected

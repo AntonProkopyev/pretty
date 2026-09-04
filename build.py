@@ -112,6 +112,7 @@ production_path_flags = [
 
 darwin = "apple-darwin" in build.target
 linux = "linux" in build.target
+windows = "windows" in build.target
 
 
 untimed_command = command
@@ -194,7 +195,10 @@ if linux:
     # Linux backend has to ask for them itself (issue 66).
     wayland_backend = pkg_config("wayland-client", "xkbcommon")
     wayland_backend.ldflags += ["-lrt"]
-    build.cppflags += ["-DHAVE_VULKAN_WAYLAND=1"]
+    build.cppflags += ["-DHAVE_VULKAN_RENDERER=1", "-DHAVE_VULKAN_WAYLAND=1"]
+elif windows:
+    vulkan = dependency(ldflags=["-lvulkan-1"])
+    build.cppflags += ["-DHAVE_VULKAN_RENDERER=1", "-DHAVE_VULKAN_WIN32=1"]
 
 
 embedded_path_flags = [
@@ -655,7 +659,7 @@ enabled_font_sources = set()
 if have_freetype_backend:
     enabled_font_sources.add("$(S)/lib/shitty/font_freetype.cpp")
 enabled_renderer_sources = set()
-if linux:
+if linux or windows:
     enabled_renderer_sources.add("$(S)/lib/shitty/render_vk.cpp")
 all_libshitty_sources = [
     source for source in build.glob("$(S)/lib/shitty/*.cpp") + build.glob("$(S)/lib/vterm/*.cpp")

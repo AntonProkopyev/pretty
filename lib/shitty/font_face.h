@@ -9,6 +9,7 @@
 #include <std/sys/types.h>
 
 namespace stl {
+    class Buffer;
     class StringView;
 }
 
@@ -40,6 +41,9 @@ u32 nextFontFaceId() noexcept;
 
 // A counted face over caller-owned bytes; the bytes must outlive the face.
 FontFace* createMemoryFontFace(const void* data, size_t size, i32 faceIndex);
+
+// Owns a moved byte buffer for the lifetime of the returned face.
+FontFace* createOwnedFontFace(stl::Buffer&& data, i32 faceIndex);
 
 // Maps a font file into memory; throws when the file cannot be opened.
 FontFace* openFontFile(stl::StringView path, i32 faceIndex);

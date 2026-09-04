@@ -38,10 +38,15 @@
 #include <std/mem/small_obj_allocator.h>
 
 #include <plt/window.h>
+#if defined(HAVE_VULKAN_WIN32)
+    #define VK_USE_PLATFORM_WIN32_KHR 1
+#endif
 #include <vulkan/vulkan.h>
 
 #if defined(HAVE_VULKAN_WAYLAND)
     #include <vulkan/vulkan_wayland.h>
+#elif defined(HAVE_VULKAN_WIN32)
+    #include <vulkan/vulkan_win32.h>
 #else
     #error No Vulkan window-system backend selected
 #endif
@@ -554,8 +559,20 @@ void RendererImpl::createInstance(const plt::RenderContext& context) {
             raiseError(StringView(u8"VK_EXT_headless_surface is unavailable"));
         }
         extensions[extensionCount++] = VK_EXT_HEADLESS_SURFACE_EXTENSION_NAME;
-    } else {
+    } else if (context.backend == plt::RenderBackend::Wayland) {
+#if defined(HAVE_VULKAN_WAYLAND)
         extensions[extensionCount++] = VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME;
+#else
+        raiseError(StringView(u8"Wayland Vulkan WSI is unavailable"));
+#endif
+    } else if (context.backend == plt::RenderBackend::Win32) {
+#if defined(HAVE_VULKAN_WIN32)
+        extensions[extensionCount++] = VK_KHR_WIN32_SURFACE_EXTENSION_NAME;
+#else
+        raiseError(StringView(u8"Win32 Vulkan WSI is unavailable"));
+#endif
+    } else {
+        raiseError(StringView(u8"Unsupported Vulkan render context"));
     }
     khrSurfaceMaintenance = instanceHasExtension(VK_KHR_SURFACE_MAINTENANCE_1_EXTENSION_NAME);
     extSurfaceMaintenance = instanceHasExtension(VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME);
@@ -593,7 +610,11 @@ void RendererImpl::createSurface(const plt::RenderContext& context) {
         checkVk(createHeadless(instance, &surfaceInfo, nullptr, &surface), "vkCreateHeadlessSurfaceEXT");
         return;
     }
-    if (context.backend != plt::RenderBackend::Wayland || context.connection == nullptr || context.window == nullptr) {
+    if (context.connection == nullptr || context.window == nullptr) {
+        raiseError(StringView(u8"Vulkan renderer requires a native render context"));
+    }
+#if defined(HAVE_VULKAN_WAYLAND)
+    if (context.backend != plt::RenderBackend::Wayland) {
         raiseError(StringView(u8"Vulkan renderer requires a Wayland render context"));
     }
     VkWaylandSurfaceCreateInfoKHR surfaceInfo{};
@@ -601,6 +622,19 @@ void RendererImpl::createSurface(const plt::RenderContext& context) {
     surfaceInfo.display = (struct wl_display*)(context.connection);
     surfaceInfo.surface = (struct wl_surface*)(context.window);
     checkVk(vkCreateWaylandSurfaceKHR(instance, &surfaceInfo, nullptr, &surface), "vkCreateWaylandSurfaceKHR");
+#elif defined(HAVE_VULKAN_WIN32)
+    if (context.backend != plt::RenderBackend::Win32) {
+        raiseError(StringView(u8"Vulkan renderer requires a Win32 render context"));
+    }
+    VkWin32SurfaceCreateInfoKHR surfaceInfo{};
+    surfaceInfo.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
+    surfaceInfo.hinstance = static_cast<HINSTANCE>(context.connection);
+    surfaceInfo.hwnd = static_cast<HWND>(context.window);
+    checkVk(
+        vkCreateWin32SurfaceKHR(instance, &surfaceInfo, nullptr, &surface),
+        "vkCreateWin32SurfaceKHR"
+    );
+#endif
 }
 
 void RendererImpl::selectPhysicalDevice() {
