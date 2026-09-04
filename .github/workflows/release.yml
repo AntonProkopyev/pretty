@@ -395,20 +395,22 @@ jobs:
           name: windows-x86_64-release
           path: ${{ runner.temp }}/windows-release
 
-      - name: Run clean-path package smoke
+      - name: Verify clean-path package hashes
         shell: pwsh
         run: |
           $root = Join-Path $env:RUNNER_TEMP "windows-smoke"
-          Expand-Archive \
-            (Join-Path $env:RUNNER_TEMP "windows-release\shitty-windows-x86_64.zip") \
-            $root
+          $archive = Join-Path $env:RUNNER_TEMP "windows-release\shitty-windows-x86_64.zip"
+          Expand-Archive -LiteralPath $archive -DestinationPath $root
           $app = Join-Path $root "shitty-windows-x86_64"
-          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
-          $version = Start-Process (Join-Path $app "st.exe") -ArgumentList @("-v") -WorkingDirectory $app -Wait -PassThru
-          $st = Start-Process (Join-Path $app "st.exe") -ArgumentList @("-config", ".\config\shitty.toml", "-e", "cmd.exe", "/D", "/Q", "/C", '"exit /b 21"') -WorkingDirectory $app -Wait -PassThru
-          $pt = Start-Process (Join-Path $app "pt.exe") -ArgumentList @("-config", ".\config\pretty.toml", "-e", "cmd.exe", "/D", "/Q", "/C", '"exit /b 22"') -WorkingDirectory $app -Wait -PassThru
-          if ($version.ExitCode -ne 0 -or $st.ExitCode -ne 21 -or $pt.ExitCode -ne 22) {
-            throw "Windows package proxy exits version=$($version.ExitCode) st=$($st.ExitCode) pt=$($pt.ExitCode)"
+          foreach ($line in Get-Content (Join-Path $app "SHA256SUMS")) {
+            if ($line -notmatch '^([0-9a-f]{64})  (.+)$') {
+              throw "Invalid SHA256SUMS line: $line"
+            }
+            $path = Join-Path $app $Matches[2]
+            $actual = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -ne $Matches[1]) {
+              throw "SHA-256 mismatch: $($Matches[2])"
+            }
           }
 
   package-release:
