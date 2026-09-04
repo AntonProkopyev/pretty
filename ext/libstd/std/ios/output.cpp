@@ -7,8 +7,11 @@
 #include <std/alg/range.h>
 #include <std/alg/exchange.h>
 
-#include <alloca.h>
-#include <sys/uio.h>
+#if defined(_WIN32)
+    #include <malloc.h>
+#else
+    #include <alloca.h>
+#endif
 
 using namespace stl;
 
@@ -59,7 +62,13 @@ size_t Output::writeVImpl(iovec* parts, size_t count) {
 }
 
 size_t Output::writeV(const StringView* parts, size_t count) {
-    auto io = (iovec*)alloca(count * sizeof(iovec));
+    iovec* const io = static_cast<iovec*>(
+#if defined(_WIN32)
+        _alloca(count * sizeof(iovec))
+#else
+        alloca(count * sizeof(iovec))
+#endif
+    );
 
     memZero(io, io + count);
 

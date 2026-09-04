@@ -1,6 +1,8 @@
 #include "platform.h"
 
-#if defined(__APPLE__)
+#if defined(PLT_HEADLESS)
+    #include "platform_headless.h"
+#elif defined(__APPLE__)
     #include "platform_cocoa.h"
 #elif defined(__linux__)
     #include "platform_wayland.h"
@@ -11,7 +13,9 @@
 using namespace plt;
 
 Platform* Platform::create(stl::ObjPool& owner) {
-#if defined(__APPLE__)
+#if defined(PLT_HEADLESS)
+    return createHeadlessPlatform(owner);
+#elif defined(__APPLE__)
     return createCocoaPlatform(owner);
 #elif defined(__linux__)
     return createWaylandPlatform(owner);

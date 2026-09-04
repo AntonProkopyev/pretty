@@ -11,8 +11,6 @@
 #include <std/alg/minmax.h>
 #include <std/alg/advance.h>
 
-#include <sys/uio.h>
-
 using namespace stl;
 
 OutBuf::~OutBuf() {

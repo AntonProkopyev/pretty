@@ -1,0 +1,13 @@
+{
+  "name": "shitty-windows-dependencies",
+  "version-string": "1",
+  "builtin-baseline": "abb6dda5cc32914d2e64d7d72b974dc301d1fc8a",
+  "dependencies": [
+    "brotli",
+    "freetype",
+    "harfbuzz",
+    "simdutf",
+    "vulkan-headers",
+    "vulkan-loader"
+  ]
+}

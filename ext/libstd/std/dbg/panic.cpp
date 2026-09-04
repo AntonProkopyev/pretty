@@ -1,13 +1,18 @@
 #include "panic.h"
-#include "color.h"
 
-#include <std/ios/sys.h>
 #include <std/sys/crt.h>
-#include <std/str/view.h>
-#include <std/ios/output.h>
 #include <std/alg/exchange.h>
 
 #include <stdlib.h>
+
+#if defined(_WIN32)
+    #include <stdio.h>
+#else
+    #include "color.h"
+    #include <std/ios/sys.h>
+    #include <std/str/view.h>
+    #include <std/ios/output.h>
+#endif
 
 using namespace stl;
 
@@ -30,6 +35,13 @@ PanicHandler stl::setPanicHandler2(PanicHandler hndl) noexcept {
 void stl::panic(const u8* what, u32 line, const u8* file) {
     panicHandler1();
 
+#if defined(_WIN32)
+    fwrite(what, 1, strLen(what), stderr);
+    fputs(" failed, at ", stderr);
+    fwrite(file, 1, strLen(file), stderr);
+    fprintf(stderr, ":%u\n", line);
+    fflush(stderr);
+#else
     sysE << Color::bright(AnsiColor::Red)
          << StringView(what, strLen(what))
          << StringView(u8" failed, at ")
@@ -39,6 +51,7 @@ void stl::panic(const u8* what, u32 line, const u8* file) {
          << Color::reset()
          << endL
          << finI;
+#endif
 
     panicHandler2();
 }

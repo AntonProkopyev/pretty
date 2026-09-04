@@ -1,7 +1,6 @@
-#ifndef _GNU_SOURCE
-    #define _GNU_SOURCE
-#endif
 #include <string.h>
+
+#include <algorithm>
 
 #include "view.h"
 #include "hash.h"
@@ -83,11 +82,18 @@ const u8* StringView::search(StringView substr) const noexcept {
         return data();
     }
 
-    return (const u8*)memmem(fix(data()), length(), fix(substr.data()), substr.length());
+    const u8* const first = fix(data());
+    const u8* const found = std::search(
+        first,
+        first + length(),
+        fix(substr.data()),
+        fix(substr.data()) + substr.length()
+    );
+    return found == first + length() ? nullptr : found;
 }
 
 const u8* StringView::memChr(u8 ch) const noexcept {
-    return (const u8*)memchr(fix(data()), ch, length());
+    return static_cast<const u8*>(memchr(fix(data()), ch, length()));
 }
 
 StringView StringView::stripCr() const noexcept {

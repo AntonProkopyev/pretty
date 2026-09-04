@@ -14,6 +14,9 @@ namespace plt {
         virtual void wait(u64 monotonicDeadline) = 0;
         virtual void dispatchTimers() = 0;
         virtual u64 nextDeadline() const = 0;
+#if defined(_WIN32)
+        virtual PollerLoop& armNative(void* handle, TimerCallback& callback) = 0;
+#endif
 
         static PollerLoop* create(stl::ObjPool& owner);
     };
