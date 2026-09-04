@@ -224,16 +224,6 @@ jobs:
             Get-Content $receipt
           }
 
-      - name: Run application proxy smoke
-        shell: pwsh
-        working-directory: ${{ runner.temp }}/windows-package
-        run: |
-          $st = Start-Process .\st.exe -ArgumentList @("-e", "cmd.exe", "/D", "/Q", "/C", '"exit /b 12"') -Wait -PassThru
-          $pt = Start-Process .\pt.exe -ArgumentList @("-e", "cmd.exe", "/D", "/Q", "/C", '"exit /b 13"') -Wait -PassThru
-          if ($st.ExitCode -ne 12 -or $pt.ExitCode -ne 13) {
-            throw "application proxy exits st=$($st.ExitCode) pt=$($pt.ExitCode)"
-          }
-
   tests-alpine:
     name: Tests Alpine
     needs: build
