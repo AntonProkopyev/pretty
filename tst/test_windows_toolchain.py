@@ -72,6 +72,46 @@ class WindowsToolchainTests(unittest.TestCase):
                 "sha256": "ae601f4e0f72bbdf441ad2df8bb16f037e2e9251559ea6b37b4057aef39c06c3",
             },
         )
+        self.assertEqual(
+            lock["assets"]["conpty_x86_64"],
+            {
+                "url": "https://api.nuget.org/v3-flatcontainer/microsoft.windows.console.conpty/1.24.260710001/microsoft.windows.console.conpty.1.24.260710001.nupkg",
+                "sha256": "175640566a3b59c4b132070ee96c2c77e5ab7edd2e92732a5eb3610bbf63d90e",
+                "members": {
+                    "runtimes/win-x64/native/conpty.dll": "conpty.dll",
+                    "build/native/runtimes/x64/OpenConsole.exe": "x64/OpenConsole.exe",
+                },
+            },
+        )
+
+    def test_fetch_extracts_selected_package_members(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "conpty.nupkg"
+            with zipfile.ZipFile(archive, "w") as stream:
+                stream.writestr("runtime/conpty.dll", b"shim")
+                stream.writestr("runtime/OpenConsole.exe", b"host")
+                stream.writestr("runtime/unused.exe", b"unused")
+            digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+            lock = root / "toolchain.lock"
+            lock.write_text(
+                "version = 1\n"
+                "vcpkg_commit = \"abb6dda5cc32914d2e64d7d72b974dc301d1fc8a\"\n"
+                "[assets.conpty_x86_64]\n"
+                f"url = \"{archive.as_uri()}\"\n"
+                f"sha256 = \"{digest}\"\n"
+                "[assets.conpty_x86_64.members]\n"
+                "\"runtime/conpty.dll\" = \"conpty.dll\"\n"
+                "\"runtime/OpenConsole.exe\" = \"x64/OpenConsole.exe\"\n"
+            )
+            output = root / "conpty"
+
+            result = self.run_fetch(lock, "conpty_x86_64", output)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual((output / "conpty.dll").read_bytes(), b"shim")
+            self.assertEqual((output / "x64" / "OpenConsole.exe").read_bytes(), b"host")
+            self.assertFalse((output / "unused.exe").exists())
 
     def test_vcpkg_manifest_uses_locked_baseline_and_dependencies(self):
         lock = tomllib.loads(LOCK.read_text())

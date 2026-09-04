@@ -30,6 +30,7 @@ class WindowsPackageContractTests(unittest.TestCase):
             "LICENSE.MIT",
             "LICENSE.GPL3",
             "LICENSE.NotoColorEmoji",
+            "Microsoft.Windows.Console.ConPTY.LICENSE.txt",
             "llvm-mingw.txt",
         ):
             with self.subTest(text=text):
@@ -51,6 +52,9 @@ class WindowsPackageContractTests(unittest.TestCase):
         self.assertIn("shitty-windows-x86_64.zip", workflow)
         self.assertIn("--extra-artifact", workflow)
         self.assertIn("-print-file-name=libwinpthread-1.dll", workflow)
+        self.assertIn("--platform conpty_x86_64", workflow)
+        self.assertIn('cp "$conpty/conpty.dll" "$runtime/"', workflow)
+        self.assertIn('cp "$conpty/x64/OpenConsole.exe" "$runtime/x64/"', workflow)
 
 
 if __name__ == "__main__":

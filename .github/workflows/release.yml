@@ -311,13 +311,17 @@ jobs:
             cmake ninja-build git curl unzip zip ragel glslang-tools librsvg2-bin \
             gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix
 
-      - name: Fetch pinned llvm-mingw and vcpkg
+      - name: Fetch pinned llvm-mingw, ConPTY and vcpkg
         run: |
           set -euo pipefail
           python3 dev/windows/fetch_toolchain.py \
             --lock dev/windows/toolchain.lock \
             --platform linux_x86_64 \
             --output "$RUNNER_TEMP/llvm-mingw"
+          python3 dev/windows/fetch_toolchain.py \
+            --lock dev/windows/toolchain.lock \
+            --platform conpty_x86_64 \
+            --output "$RUNNER_TEMP/conpty"
           commit="$(python3 -c 'import tomllib; print(tomllib.load(open("dev/windows/toolchain.lock", "rb"))["vcpkg_commit"])')"
           git init "$RUNNER_TEMP/vcpkg"
           git -C "$RUNNER_TEMP/vcpkg" fetch --depth 1 https://github.com/microsoft/vcpkg.git "$commit"
@@ -347,7 +351,8 @@ jobs:
           runtime="$RUNNER_TEMP/windows-runtime"
           installed="$RUNNER_TEMP/vcpkg-installed/x64-mingw-dynamic"
           toolchain="$RUNNER_TEMP/llvm-mingw"
-          mkdir -p "$runtime" "$RUNNER_TEMP/windows-release"
+          conpty="$RUNNER_TEMP/conpty"
+          mkdir -p "$runtime/x64" "$RUNNER_TEMP/windows-release"
           cp -L "$RUNNER_TEMP/windows-app/st.exe" "$runtime/st.exe"
           cp -L "$RUNNER_TEMP/windows-app/pt.exe" "$runtime/pt.exe"
           cp "$installed/bin/"*.dll "$runtime/"
@@ -356,6 +361,8 @@ jobs:
           cp "$(x86_64-w64-mingw32-g++ -print-file-name=libgcc_s_seh-1.dll)" "$runtime/"
           cp "$(x86_64-w64-mingw32-g++ -print-file-name=libstdc++-6.dll)" "$runtime/"
           cp "$(x86_64-w64-mingw32-g++ -print-file-name=libwinpthread-1.dll)" "$runtime/"
+          cp "$conpty/conpty.dll" "$runtime/"
+          cp "$conpty/x64/OpenConsole.exe" "$runtime/x64/"
           export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
           python3 dev/windows/package.py \
             --runtime-dir "$runtime" \
