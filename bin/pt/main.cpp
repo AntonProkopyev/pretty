@@ -8,6 +8,12 @@
 
 #include "pretty_icon_data.h"
 
+#if defined(_WIN32)
+    #define WIN32_LEAN_AND_MEAN
+    #define NOMINMAX
+    #include <windows.h>
+#endif
+
 using namespace stl;
 
 namespace {
@@ -55,5 +61,17 @@ namespace {
 }
 
 int main(int argc, char* argv[]) {
+#if defined(_WIN32)
+    (void)(argc);
+    (void)(argv);
+    return runWindowsMain(*createBrand());
+#else
     return runMain(*createBrand(), argc, argv);
+#endif
 }
+
+#if defined(_WIN32)
+int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
+    return runWindowsMain(*createBrand());
+}
+#endif

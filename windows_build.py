@@ -191,3 +191,26 @@ if vcpkg_installed:
     group("windows-vulkan-test", windows_vulkan_test)
     group("windows-font-test", windows_font_backend_probe)
     group("windows-font-test", windows_font_test)
+
+windows_conpty_test = program(
+    srcs=["$(S)/dev/windows/conpty_test.cpp"],
+    cppflags=["-D_WIN32_WINNT=0x0A00"],
+    cxxflags=["-std=c++23"],
+    ldflags=["-static"],
+)
+
+windows_pty_backend_probe = library(
+    name="windows_pty_backend_probe",
+    srcs=["$(S)/lib/shitty/pty_windows.cpp"],
+    cflags=[
+        "-I$(S)",
+        "-I$(S)/ext",
+        "-I$(S)/ext/libstd",
+        "-I$(S)/lib/shitty",
+    ],
+    cppflags=["-D_WIN32_WINNT=0x0A00"],
+    cxxflags=["-std=c++26"],
+)
+
+group("windows-conpty-test", windows_pty_backend_probe)
+group("windows-conpty-test", windows_conpty_test)

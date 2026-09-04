@@ -18,6 +18,17 @@ struct PtySize {
     u32 pixelHeight = 0;
 };
 
+enum class PtyExitState : u8 {
+    Running,
+    Exited,
+    Terminated,
+};
+
+struct PtyExitResult {
+    PtyExitState state = PtyExitState::Running;
+    u32 code = 0;
+};
+
 // One child and its pseudoterminal. The handle is a pool-owned duplex
 // resource: dropping its owner hangs up the child and closes the master.
 // Reading and writing are scheduler-aware blocking stream operations; the
@@ -58,4 +69,8 @@ struct PtyHandle {
     // there is none to report - a scripted or replying pty, a dead
     // child, a kernel that answers with nothing. Cheap enough to poll.
     virtual pid_t foregroundProcessGroup() = 0;
+
+    virtual PtyExitResult exitResult() const {
+        return {};
+    }
 };

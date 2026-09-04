@@ -51,19 +51,21 @@
 #include <stdio.h>
 #include <limits.h>
 #include <locale.h>
-#include <signal.h>
 #include <stdlib.h>
-#include <unistd.h>
-#include <langinfo.h>
 #include <plt/drop.h>
-#include <sys/wait.h>
 #include <plt/fiber.h>
 #include <plt/input.h>
 #include <plt/mutex.h>
-#include <sys/types.h>
 #include <plt/window.h>
 #include <plt/poller.h>
 #include <plt/platform.h>
+#if !defined(_WIN32)
+    #include <signal.h>
+    #include <unistd.h>
+    #include <langinfo.h>
+    #include <sys/wait.h>
+    #include <sys/types.h>
+#endif
 
 using namespace stl;
 using namespace plt;
@@ -146,10 +148,13 @@ namespace {
         // True until the first frame supplies real metrics; -geometry is
         // applied against them exactly once.
         bool initialGeometryPending = true;
+        int requestedExit = 0;
 
         int takeTestFd(int& argc, char* argv[]);
         void createRenderer();
+#if !defined(_WIN32)
         static void childSignalHandler(int signal, siginfo_t* info, void*);
+#endif
         void setupSignals();
         bool presentTerminal();
         bool eventLoop();
@@ -420,6 +425,7 @@ int ApplicationImpl::takeTestFd(int& argc, char* argv[]) {
 // The status of the most recently reaped child. The signal handler
 // records it; ApplicationImpl::close exits with it once the last session
 // is gone, which is the only place that knows the process is ending.
+#if !defined(_WIN32)
 static volatile sig_atomic_t lastChildStatus = 0;
 
 void ApplicationImpl::childSignalHandler(int signal, siginfo_t*, void*) {
@@ -438,8 +444,10 @@ void ApplicationImpl::childSignalHandler(int signal, siginfo_t*, void*) {
         }
     }
 }
+#endif
 
 void ApplicationImpl::setupSignals() {
+#if !defined(_WIN32)
     struct sigaction childAction{};
     childAction.sa_sigaction = childSignalHandler;
     childAction.sa_flags = SA_SIGINFO | SA_RESTART | SA_NOCLDSTOP;
@@ -457,6 +465,7 @@ void ApplicationImpl::setupSignals() {
     if (sigaction(SIGQUIT, &defaultAction, nullptr) < 0) {
         Errno().raise(StringBuilder() << StringView(u8"can't reset SIGQUIT handler: sigaction()"));
     }
+#endif
 }
 
 bool ApplicationImpl::presentTerminal() {
@@ -487,7 +496,17 @@ bool ApplicationImpl::presentTerminal() {
 }
 
 void ApplicationImpl::close() {
-#if defined(SHITTY_FOR_TESTS)
+#if defined(SHITTY_FOR_TESTS) || defined(_WIN32)
+#if defined(_WIN32)
+    const PtyExitResult exit = composer.sessions == nullptr
+        ? PtyExitResult{}
+        : composer.sessions->lastExit();
+    requestedExit = exit.state == PtyExitState::Running
+        ? 0
+        : static_cast<int>(exit.code);
+#else
+    requestedExit = 0;
+#endif
     composer.platform->stop();
 #else
     // Exit with the shell's status only when a dying shell is what ended
@@ -552,6 +571,9 @@ void ApplicationImpl::showWindow() {
 }
 
 void ApplicationImpl::checkLocale() {
+#if defined(_WIN32)
+    return;
+#else
     const char* locale = setlocale(LC_ALL, "");
     if (locale != nullptr && StringView(nl_langinfo(CODESET)) == StringView(u8"UTF-8")) {
         return;
@@ -580,6 +602,7 @@ void ApplicationImpl::checkLocale() {
         return;
     }
     sysO << StringView(u8"Warning: non-UTF-8 locale ") << StringView(locale) << StringView(u8"; international input may be broken.") << endL;
+#endif
 }
 
 int ApplicationImpl::run(int argc, char* argv[]) {
@@ -661,7 +684,7 @@ int ApplicationImpl::run(int argc, char* argv[]) {
     // disconnected; drop it while the connection is still alive.
     composer.renderer = nullptr;
     composer.rendererPool = ObjPool::fromMemory();
-    return 0;
+    return requestedExit;
 }
 
 Application* Application::create(Composer& composer) {

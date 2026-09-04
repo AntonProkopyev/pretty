@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <lib/vterm/pty.h>
 #include <std/str/view.h>
 
 #include <signal.h>
@@ -33,6 +34,9 @@ struct SessionSet {
     // False when the closed session was the last one: the caller owns
     // the decision to close the window.
     virtual bool close(size_t index) = 0;
+    virtual PtyExitResult lastExit() const {
+        return {};
+    }
     // The number of live sessions, readable from a signal handler.
     static volatile sig_atomic_t liveSessions;
 

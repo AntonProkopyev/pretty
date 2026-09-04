@@ -180,8 +180,8 @@ namespace {
         Vector<TimerCallback*> deferredRound;
         TimerQueue timers;
 #if defined(_WIN32)
-        void* nativeHandle = nullptr;
-        TimerCallback* nativeCallback = nullptr;
+        Vector<void*> nativeHandles;
+        Vector<TimerCallback*> nativeCallbacks;
 #endif
     };
 }
@@ -243,9 +243,10 @@ void PollerLoopImpl::dispatchTimers() {
 
 #if defined(_WIN32)
 PollerLoop& PollerLoopImpl::armNative(void* handle, TimerCallback& callback) {
-    STD_INSIST(nativeHandle == nullptr);
-    nativeHandle = handle;
-    nativeCallback = &callback;
+    STD_INSIST(handle != nullptr);
+    STD_INSIST(nativeHandles.length() < MAXIMUM_WAIT_OBJECTS - 1);
+    nativeHandles.pushBack(handle);
+    nativeCallbacks.pushBack(&callback);
     return *this;
 }
 #endif
@@ -263,7 +264,7 @@ void PollerLoopImpl::wait(u64 monotonicDeadline) {
             min<u64>((timeoutUs + 999) / 1000, MAXDWORD - 1)
         );
     }();
-    if (nativeHandle == nullptr) {
+    if (nativeHandles.empty()) {
         const DWORD result = MsgWaitForMultipleObjectsEx(
             0,
             nullptr,
@@ -273,21 +274,21 @@ void PollerLoopImpl::wait(u64 monotonicDeadline) {
         );
         STD_INSIST(result == WAIT_OBJECT_0 || result == WAIT_TIMEOUT);
     } else {
-        HANDLE handle = nativeHandle;
+        const DWORD count = static_cast<DWORD>(nativeHandles.length());
         const DWORD result = MsgWaitForMultipleObjectsEx(
-            1,
-            &handle,
+            count,
+            reinterpret_cast<const HANDLE*>(nativeHandles.data()),
             timeoutMilliseconds,
             QS_ALLINPUT,
             MWMO_INPUTAVAILABLE
         );
         STD_INSIST(
-            result == WAIT_OBJECT_0
-            || result == WAIT_OBJECT_0 + 1
+            (result >= WAIT_OBJECT_0 && result < WAIT_OBJECT_0 + count)
+            || result == WAIT_OBJECT_0 + count
             || result == WAIT_TIMEOUT
         );
-        if (result == WAIT_OBJECT_0) {
-            nativeCallback->ready();
+        if (result >= WAIT_OBJECT_0 && result < WAIT_OBJECT_0 + count) {
+            nativeCallbacks[result - WAIT_OBJECT_0]->ready();
         }
     }
 #else
