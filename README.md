@@ -5,6 +5,7 @@
 [![upstream](https://img.shields.io/badge/upstream-pg83%2Fshitty-181717?logo=github)](https://github.com/pg83/shitty)
 [![license](https://img.shields.io/badge/license-MIT%20%7C%20GPL--3.0-blue)](LICENSE)
 [![platform](https://img.shields.io/badge/platform-Windows%2011%20x64-0078d4?logo=windows11)](#windows)
+[![Windows benchmark](https://img.shields.io/badge/Windows%20Terminal-0.90%C3%97%20ASCII%20%7C%201.48%C3%97%20random-ffb000)](#windows-11)
 
 Pretty is the native Windows 11 x64 fork of
 [`pg83/shitty`](https://github.com/pg83/shitty). It adds a Win32 frontend,
@@ -24,6 +25,26 @@ code and differ only in their name, application identity, config and public
 environment names, help/version text, desktop entry, and icon.
 
 ## Performance
+
+### Windows 11
+
+Measured on Windows 11 build 26200.9168 against Windows Terminal
+1.24.11911.0. Both terminals used Cascadia Mono 12 pt, an 80x24 grid, and
+500 lines of scrollback. The harness interleaved three runs and selected the
+best wall time.
+
+| workload | input | Pretty / Shitty | Windows Terminal | throughput ratio |
+|---|---:|---:|---:|---:|
+| printable ASCII | 1,000,000,000 bytes | 9.450s, 100.9 MiB/s | 8.534s, 111.8 MiB/s | 0.90x |
+| random bytes | 100,000,000 bytes | 5.120s, 18.6 MiB/s | 7.558s, 12.6 MiB/s | **1.48x** |
+
+Windows Terminal was 1.11x faster on printable ASCII. Pretty / Shitty was
+1.48x faster on random bytes. The full
+[receipt](dev/windows/benchmark-windows-terminal.json) records every sample
+and executable hash. Reproduce it with
+[`terminal_perf.py`](dev/windows/terminal_perf.py).
+
+### macOS
 
 100MB catted through the GUI on an Apple-silicon MacBook, every terminal
 equalized first: Menlo 12pt, the same 14x28px cell, an 80x24 grid, 500

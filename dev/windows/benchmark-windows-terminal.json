@@ -1,0 +1,207 @@
+{
+  "environment": {
+    "font": "Cascadia Mono",
+    "font_size": 12,
+    "grid": "80x24",
+    "host": "Windows-11-10.0.26200-SP0",
+    "os_build": "26200.9168",
+    "python": "3.14.2 (tags/v3.14.2:df79316, Dec  5 2025, 17:18:21) [MSC v.1944 64 bit (AMD64)]",
+    "scrollback_lines_requested": 500,
+    "shitty_column_delta": 0,
+    "shitty_row_delta": 0,
+    "shitty_sha256": "888ea07b812d8d5c9819be55594e45c061110ad993b41c0b995412a45c3fe4e5",
+    "windows_terminal_column_delta": 0,
+    "windows_terminal_profile": "Shitty README Benchmark",
+    "windows_terminal_version": "1.24.11911.0"
+  },
+  "generated_at": "2026-09-04T18:50:46.400130+00:00",
+  "method": "README cat workload, best wall time",
+  "runs": 3,
+  "samples": [
+    {
+      "bytes": 1000000000,
+      "case": "ascii",
+      "columns": 80,
+      "cpu_ns": 1593750000,
+      "elapsed_ns": 8873400000,
+      "iteration": 0,
+      "launcher_exit": 0,
+      "lines": 24,
+      "terminal": "shitty",
+      "terminal_cpu_ns": 3031250000,
+      "wall_ns": 9490200600
+    },
+    {
+      "bytes": 1000000000,
+      "case": "ascii",
+      "columns": 80,
+      "cpu_ns": 1750000000,
+      "elapsed_ns": 8133653500,
+      "iteration": 0,
+      "launcher_exit": 0,
+      "lines": 24,
+      "terminal": "windows-terminal",
+      "terminal_cpu_ns": 15625000,
+      "wall_ns": 8796708200
+    },
+    {
+      "bytes": 1000000000,
+      "case": "ascii",
+      "columns": 80,
+      "cpu_ns": 2171875000,
+      "elapsed_ns": 8931265500,
+      "iteration": 1,
+      "launcher_exit": 0,
+      "lines": 24,
+      "terminal": "windows-terminal",
+      "terminal_cpu_ns": 15625000,
+      "wall_ns": 9585156700
+    },
+    {
+      "bytes": 1000000000,
+      "case": "ascii",
+      "columns": 80,
+      "cpu_ns": 1671875000,
+      "elapsed_ns": 9013117900,
+      "iteration": 1,
+      "launcher_exit": 0,
+      "lines": 24,
+      "terminal": "shitty",
+      "terminal_cpu_ns": 2828125000,
+      "wall_ns": 9450422600
+    },
+    {
+      "bytes": 1000000000,
+      "case": "ascii",
+      "columns": 80,
+      "cpu_ns": 2062500000,
+      "elapsed_ns": 9528901100,
+      "iteration": 2,
+      "launcher_exit": 0,
+      "lines": 24,
+      "terminal": "shitty",
+      "terminal_cpu_ns": 3000000000,
+      "wall_ns": 9975681900
+    },
+    {
+      "bytes": 1000000000,
+      "case": "ascii",
+      "columns": 80,
+      "cpu_ns": 1421875000,
+      "elapsed_ns": 7893230700,
+      "iteration": 2,
+      "launcher_exit": 0,
+      "lines": 24,
+      "terminal": "windows-terminal",
+      "terminal_cpu_ns": 31250000,
+      "wall_ns": 8533933200
+    },
+    {
+      "bytes": 100000000,
+      "case": "random",
+      "columns": 80,
+      "cpu_ns": 234375000,
+      "elapsed_ns": 4702317400,
+      "iteration": 0,
+      "launcher_exit": 0,
+      "lines": 24,
+      "terminal": "shitty",
+      "terminal_cpu_ns": 4203125000,
+      "wall_ns": 5119773800
+    },
+    {
+      "bytes": 100000000,
+      "case": "random",
+      "columns": 80,
+      "cpu_ns": 453125000,
+      "elapsed_ns": 6896808100,
+      "iteration": 0,
+      "launcher_exit": 0,
+      "lines": 24,
+      "terminal": "windows-terminal",
+      "terminal_cpu_ns": 31250000,
+      "wall_ns": 7557556800
+    },
+    {
+      "bytes": 100000000,
+      "case": "random",
+      "columns": 80,
+      "cpu_ns": 656250000,
+      "elapsed_ns": 7005307700,
+      "iteration": 1,
+      "launcher_exit": 0,
+      "lines": 24,
+      "terminal": "windows-terminal",
+      "terminal_cpu_ns": 15625000,
+      "wall_ns": 11417348700
+    },
+    {
+      "bytes": 100000000,
+      "case": "random",
+      "columns": 80,
+      "cpu_ns": 562500000,
+      "elapsed_ns": 7908369200,
+      "iteration": 1,
+      "launcher_exit": 0,
+      "lines": 24,
+      "terminal": "shitty",
+      "terminal_cpu_ns": 6765625000,
+      "wall_ns": 8341087400
+    },
+    {
+      "bytes": 100000000,
+      "case": "random",
+      "columns": 80,
+      "cpu_ns": 218750000,
+      "elapsed_ns": 4723193200,
+      "iteration": 2,
+      "launcher_exit": 0,
+      "lines": 24,
+      "terminal": "shitty",
+      "terminal_cpu_ns": 4312500000,
+      "wall_ns": 5142066500
+    },
+    {
+      "bytes": 100000000,
+      "case": "random",
+      "columns": 80,
+      "cpu_ns": 468750000,
+      "elapsed_ns": 6933077800,
+      "iteration": 2,
+      "launcher_exit": 0,
+      "lines": 24,
+      "terminal": "windows-terminal",
+      "terminal_cpu_ns": 31250000,
+      "wall_ns": 7577898600
+    }
+  ],
+  "schema": 1,
+  "summary": {
+    "ascii": {
+      "shitty": {
+        "best_wall_s": 9.4504226,
+        "throughput_mib_s": 100.91340427530194,
+        "writer_elapsed_s": 9.0131179
+      },
+      "throughput_ratio_shitty_over_windows_terminal": 0.9030213315539986,
+      "windows-terminal": {
+        "best_wall_s": 8.5339332,
+        "throughput_mib_s": 111.7508532180976,
+        "writer_elapsed_s": 7.8932307
+      }
+    },
+    "random": {
+      "shitty": {
+        "best_wall_s": 5.1197738,
+        "throughput_mib_s": 18.627274439473283,
+        "writer_elapsed_s": 4.7023174
+      },
+      "throughput_ratio_shitty_over_windows_terminal": 1.4761505283690464,
+      "windows-terminal": {
+        "best_wall_s": 7.5575568,
+        "throughput_mib_s": 12.61881771641134,
+        "writer_elapsed_s": 6.8968081
+      }
+    }
+  }
+}
