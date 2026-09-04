@@ -33,6 +33,9 @@ using namespace stl;
 namespace {
     constexpr wchar_t windowClassName[] = L"Shitty.Platform.Win32";
     constexpr wchar_t dropTargetProperty[] = L"Shitty.Win32.DropTarget";
+    constexpr UINT_PTR frameTimerId = 1;
+    constexpr UINT frameDelayMilliseconds = 8;
+    constexpr ULONGLONG attentionIntervalMilliseconds = 1000;
     const StringView utf8Mime(u8"text/plain;charset=utf-8");
     const StringView uriListMime(u8"text/uri-list");
 
@@ -779,6 +782,8 @@ namespace {
         bool liveResize = false;
         bool restoredMaximized = false;
         bool pointerInside = false;
+        bool frameTimerArmed = false;
+        ULONGLONG lastAttention = 0;
         u16 modifiers = 0;
         u8 shiftKeys = 0;
         u8 controlKeys = 0;
@@ -841,6 +846,9 @@ namespace {
 
 WindowWin32::~WindowWin32() noexcept {
     if (handle != nullptr) {
+        if (frameTimerArmed) {
+            KillTimer(handle, frameTimerId);
+        }
         revokeDrop();
         DestroyWindow(handle);
     }
@@ -1402,7 +1410,19 @@ LRESULT WindowWin32::message(UINT message_, WPARAM wparam, LPARAM lparam) {
         refreshInfo();
         return 0;
     }
+    case WM_TIMER:
+        if (wparam != frameTimerId) {
+            return DefWindowProcW(handle, message_, wparam, lparam);
+        }
+        KillTimer(handle, frameTimerId);
+        frameTimerArmed = false;
+        STD_INSIST(InvalidateRect(handle, nullptr, FALSE) != 0);
+        return 0;
     case WM_PAINT: {
+        if (frameTimerArmed) {
+            KillTimer(handle, frameTimerId);
+            frameTimerArmed = false;
+        }
         PAINTSTRUCT paint;
         BeginPaint(handle, &paint);
         if (frame != nullptr) {
@@ -1440,7 +1460,11 @@ void WindowWin32::requestClose() {
 }
 
 void WindowWin32::requestFrame() {
-    STD_INSIST(InvalidateRect(handle, nullptr, FALSE) != 0);
+    if (frameTimerArmed) {
+        return;
+    }
+    frameTimerArmed = true;
+    STD_INSIST(SetTimer(handle, frameTimerId, frameDelayMilliseconds, nullptr) == frameTimerId);
 }
 
 void WindowWin32::requestTitle(StringView title) {
@@ -1449,6 +1473,14 @@ void WindowWin32::requestTitle(StringView title) {
 }
 
 void WindowWin32::requestAttention() {
+    if (GetForegroundWindow() == handle) {
+        return;
+    }
+    const ULONGLONG now = GetTickCount64();
+    if (lastAttention != 0 && now - lastAttention < attentionIntervalMilliseconds) {
+        return;
+    }
+    lastAttention = now;
     FLASHWINFO request = {
         .cbSize = sizeof(FLASHWINFO),
         .hwnd = handle,

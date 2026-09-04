@@ -86,7 +86,7 @@ def package(arguments):
     closure = recursive_closure(
         arguments.objdump,
         arguments.runtime_dir,
-        ["st.exe", "pt.exe"],
+        ["st.exe", "pt.exe", "conpty.dll", "x64/OpenConsole.exe"],
     )
     if closure["missing"] or closure["forbidden"]:
         raise RuntimeError(
@@ -116,6 +116,10 @@ def package(arguments):
         "licenses/LICENSE.GPL3": content(arguments.project_root / "LICENSE.GPL3"),
         "licenses/llvm-mingw.txt": content(arguments.llvm_license),
         "licenses/gcc-mingw.txt": content(arguments.gcc_copyright),
+        "licenses/Microsoft.Windows.Console.ConPTY.LICENSE.txt": content(
+            arguments.project_root
+            / "dev/windows/Microsoft.Windows.Console.ConPTY.LICENSE.txt"
+        ),
         "README.md": content(arguments.project_root / "README.md"),
         "pe-audit.json": (json.dumps(closure, indent=2, sort_keys=True) + "\n").encode(),
     })

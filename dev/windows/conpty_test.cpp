@@ -295,6 +295,55 @@ int main() {
         FreeConsole();
         AllocConsole();
     }
+    wchar_t perfPath[32768];
+    const DWORD perfLength = GetEnvironmentVariableW(
+        L"SHITTY_CONPTY_PERF_FILE",
+        perfPath,
+        static_cast<DWORD>(std::size(perfPath))
+    );
+    if (perfLength != 0 && perfLength < std::size(perfPath)) {
+        wchar_t perfCommand[32768];
+        const DWORD commandLength = GetEnvironmentVariableW(
+            L"SHITTY_CONPTY_PERF_COMMAND",
+            perfCommand,
+            static_cast<DWORD>(std::size(perfCommand))
+        );
+        Handle file(CreateFileW(
+            perfPath,
+            GENERIC_READ,
+            FILE_SHARE_READ,
+            nullptr,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            nullptr
+        ));
+        LARGE_INTEGER bytes{};
+        if (!file.valid() || GetFileSizeEx(file.value, &bytes) == 0) {
+            return 5;
+        }
+        const auto started = std::chrono::steady_clock::now();
+        const SessionResult perf = execute(
+            commandPrompt(
+                commandLength != 0 && commandLength < std::size(perfCommand)
+                    ? std::wstring(perfCommand)
+                    : L"type \"" + std::wstring(perfPath) + L"\""
+            ),
+            {},
+            120000,
+            false
+        );
+        const double seconds = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - started
+        ).count();
+        std::printf(
+            "conpty_perf bytes=%lld seconds=%.6f MiB/s=%.3f exit=%lu\n",
+            bytes.QuadPart,
+            seconds,
+            static_cast<double>(bytes.QuadPart) / (1 << 20) / seconds,
+            perf.exitCode
+        );
+        return perf.exitCode == 0 ? 0 : 6;
+    }
     const SessionResult unicode = execute(
         commandPrompt(
             L"chcp 65001>nul & set /p line= & echo OUT:!line! & exit /b 7"

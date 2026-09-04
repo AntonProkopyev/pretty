@@ -14,13 +14,19 @@ SYSTEM = {
     "advapi32.dll",
     "cfgmgr32.dll",
     "comdlg32.dll",
+    "d2d1.dll",
+    "d3d11.dll",
+    "d3dcompiler_47.dll",
     "dwrite.dll",
+    "dxgi.dll",
     "gdi32.dll",
     "imm32.dll",
     "kernel32.dll",
     "msvcrt.dll",
+    "ntdll.dll",
     "ole32.dll",
     "oleaut32.dll",
+    "propsys.dll",
     "shell32.dll",
     "shlwapi.dll",
     "user32.dll",
@@ -28,6 +34,7 @@ SYSTEM = {
     "version.dll",
     "winmm.dll",
     "ws2_32.dll",
+    "usp10.dll",
 }
 
 
@@ -54,7 +61,7 @@ def recursive_closure(objdump, root, entries):
     # package was assembled on a case-insensitive filesystem.
     packaged = {
         path.name.lower(): path
-        for path in root.iterdir()
+        for path in root.rglob("*")
         if path.is_file()
     }
     pending = [root / entry for entry in entries]
@@ -63,7 +70,7 @@ def recursive_closure(objdump, root, entries):
     forbidden = set()
     while pending:
         image = pending.pop()
-        key = image.name.lower()
+        key = image.relative_to(root).as_posix().lower()
         if key in visited:
             continue
         if not image.is_file():
@@ -71,7 +78,7 @@ def recursive_closure(objdump, root, entries):
             continue
         metadata, names = imports(objdump, image)
         visited[key] = {
-            "path": image.name,
+            "path": image.relative_to(root).as_posix(),
             "coff_x86_64": "file format coff-x86-64" in metadata,
             "imports": names,
         }

@@ -80,20 +80,109 @@ namespace {
         HANDLE value;
     };
 
+    struct ConptyApi final {
+        using Create = HRESULT (WINAPI*)(COORD, HANDLE, HANDLE, DWORD, HPCON*);
+        using Resize = HRESULT (WINAPI*)(HPCON, COORD);
+        using Release = HRESULT (WINAPI*)(HPCON);
+        using Close = VOID (WINAPI*)(HPCON);
+
+        ConptyApi() = default;
+
+        bool initialize() {
+            std::wstring path(32768, L'\0');
+            const DWORD length = GetModuleFileNameW(
+                nullptr,
+                path.data(),
+                static_cast<DWORD>(path.size())
+            );
+            if (length == 0 || length == path.size()) {
+                return false;
+            }
+            path.resize(length);
+            const size_t separator = path.find_last_of(L"\\/");
+            if (separator == std::wstring::npos) {
+                return false;
+            }
+            path.resize(separator + 1);
+            path += L"conpty.dll";
+            const DWORD attributes = GetFileAttributesW(path.c_str());
+            if (attributes == INVALID_FILE_ATTRIBUTES) {
+                const DWORD error = GetLastError();
+                return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND;
+            }
+            if ((attributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+                return false;
+            }
+            module = LoadLibraryExW(
+                path.c_str(),
+                nullptr,
+                LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32
+            );
+            if (module == nullptr) {
+                return false;
+            }
+            create_ = reinterpret_cast<Create>(
+                GetProcAddress(module, "ConptyCreatePseudoConsole")
+            );
+            resize_ = reinterpret_cast<Resize>(
+                GetProcAddress(module, "ConptyResizePseudoConsole")
+            );
+            release_ = reinterpret_cast<Release>(
+                GetProcAddress(module, "ConptyReleasePseudoConsole")
+            );
+            close_ = reinterpret_cast<Close>(
+                GetProcAddress(module, "ConptyClosePseudoConsole")
+            );
+            if (create_ == nullptr || resize_ == nullptr
+                    || release_ == nullptr || close_ == nullptr) {
+                FreeLibrary(module);
+                module = nullptr;
+                return false;
+            }
+            return true;
+        }
+
+        ConptyApi(const ConptyApi&) = delete;
+        ConptyApi& operator=(const ConptyApi&) = delete;
+
+        ~ConptyApi() noexcept {
+            if (module != nullptr) {
+                FreeLibrary(module);
+            }
+        }
+
+        HMODULE module = nullptr;
+        Create create_ = CreatePseudoConsole;
+        Resize resize_ = ResizePseudoConsole;
+        Release release_ = nullptr;
+        Close close_ = ClosePseudoConsole;
+    };
+
     struct PseudoConsole final {
+        PseudoConsole() = default;
+
         bool create(COORD size, HANDLE input, HANDLE output) {
-            return SUCCEEDED(CreatePseudoConsole(size, input, output, 0, &value));
+            return api.initialize()
+                && SUCCEEDED(api.create_(size, input, output, 0, &value));
         }
 
         bool resize(COORD size) const {
-            return SUCCEEDED(ResizePseudoConsole(value, size));
+            return SUCCEEDED(api.resize_(value, size));
+        }
+
+        bool releaseReference() const {
+            return api.release_ == nullptr || SUCCEEDED(api.release_(value));
+        }
+
+        bool bundled() const {
+            return api.module != nullptr;
         }
 
         bool close() {
             if (value == nullptr) {
                 return false;
             }
-            ClosePseudoConsole(value);
+            api.close_(value);
             value = nullptr;
             return true;
         }
@@ -104,10 +193,18 @@ namespace {
             return result;
         }
 
+        void close(HPCON released) const {
+            api.close_(released);
+        }
+
+        PseudoConsole(const PseudoConsole&) = delete;
+        PseudoConsole& operator=(const PseudoConsole&) = delete;
+
         ~PseudoConsole() noexcept {
             close();
         }
 
+        ConptyApi api;
         HPCON value = nullptr;
     };
 
@@ -453,10 +550,14 @@ namespace {
                 .state = forced ? PtyExitState::Terminated : PtyExitState::Exited,
                 .code = code,
             };
-            closing = console.release();
+            if (console.bundled()) {
+                STD_INSIST(console.releaseReference());
+            } else {
+                closing = console.release();
+            }
         }
         if (closing != nullptr) {
-            ClosePseudoConsole(closing);
+            console.close(closing);
         }
         pty.doorbell->signal();
     }
@@ -547,7 +648,9 @@ void PtyHandleImpl::resize(const PtySize& size) {
     }
 
     PtyHandle::Chunk* PtyHandleImpl::allocate(size_t len) {
-        return new ChunkImpl(std::min(len, blockSize));
+        auto* const block = new ChunkImpl(std::min(len, blockSize));
+        block->used = block->storage.size();
+        return block;
     }
 
     void PtyHandleImpl::send(Chunk* chunk, size_t len) {

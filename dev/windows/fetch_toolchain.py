@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Fetch and verify the pinned llvm-mingw toolchain."""
+"""Fetch and verify a pinned Windows build input."""
 
 import argparse
 import hashlib
@@ -62,6 +62,23 @@ def extract(archive_path, destination):
     return entries[0]
 
 
+def extract_members(archive_path, destination, members):
+    destination.mkdir()
+    root = destination.resolve()
+    with zipfile.ZipFile(archive_path) as archive:
+        for source, name in members.items():
+            target = (destination / name).resolve()
+            if not target.is_relative_to(root):
+                raise ValueError(f"archive path escapes destination: {name}")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                with archive.open(source) as input_, target.open("wb") as output:
+                    shutil.copyfileobj(input_, output)
+            except KeyError as error:
+                raise ValueError(f"archive member is missing: {source}") from error
+    return destination
+
+
 def installed(output, expected):
     try:
         return (output / MARKER).read_text().strip() == expected
@@ -88,6 +105,7 @@ def fetch(lock_path, platform, output):
         asset = lock["assets"][platform]
         url = asset["url"]
         expected = asset["sha256"]
+        members = asset.get("members")
     except KeyError as error:
         raise ValueError(f"unknown toolchain platform: {platform}") from error
     if installed(output, expected):
@@ -99,7 +117,11 @@ def fetch(lock_path, platform, output):
         actual = digest(archive)
         if actual != expected:
             raise ValueError(f"checksum mismatch: expected {expected}, got {actual}")
-        extracted = extract(archive, temporary / "unpacked")
+        extracted = (
+            extract_members(archive, temporary / "unpacked", members)
+            if members is not None
+            else extract(archive, temporary / "unpacked")
+        )
         return replace_owned(extracted, output, expected)
 
 
