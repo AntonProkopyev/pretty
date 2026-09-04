@@ -38,12 +38,62 @@
 #include <wchar.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(_WIN32)
+    #define WIN32_LEAN_AND_MEAN
+    #define NOMINMAX
+    #include <windows.h>
+    #include <shlobj.h>
+#endif
 
 using namespace stl;
 
+#if !defined(_WIN32)
 extern "C" char** environ;
+#endif
 
 namespace {
+
+#if defined(_WIN32)
+    bool appendLocalAppData(StringBuilder& path) {
+        PWSTR value = nullptr;
+        if (FAILED(SHGetKnownFolderPath(
+                FOLDERID_LocalAppData,
+                KF_FLAG_DEFAULT,
+                nullptr,
+                &value
+            ))) {
+            return false;
+        }
+        const int bytes = WideCharToMultiByte(
+            CP_UTF8,
+            0,
+            value,
+            -1,
+            nullptr,
+            0,
+            nullptr,
+            nullptr
+        );
+        if (bytes > 1) {
+            Buffer encoded(static_cast<size_t>(bytes));
+            encoded.seekAbsolute(static_cast<size_t>(bytes));
+            WideCharToMultiByte(
+                CP_UTF8,
+                0,
+                value,
+                -1,
+                static_cast<char*>(encoded.mutData()),
+                bytes,
+                nullptr,
+                nullptr
+            );
+            encoded.seekNegative(1);
+            path << encoded;
+        }
+        CoTaskMemFree(value);
+        return bytes > 1;
+    }
+#endif
 
     enum class OptionKind {
         NoArg,
@@ -725,6 +775,13 @@ void OptionsParser::loadConfigFile() {
         path << *chosen;
         required = true;
     } else {
+#if defined(_WIN32)
+        if (!appendLocalAppData(path)) {
+            return;
+        }
+        path << StringView(u8"/") << brand.identifier()
+            << StringView(u8"/") << brand.identifier() << StringView(u8".toml");
+#else
         const char* xdg = getenv("XDG_CONFIG_HOME");
         if (xdg != nullptr && xdg[0] != '\0') {
             path << StringView(xdg) << StringView(u8"/") << brand.identifier() << StringView(u8"/") << brand.identifier() << StringView(u8".toml");
@@ -735,6 +792,7 @@ void OptionsParser::loadConfigFile() {
             }
             path << StringView(home) << StringView(u8"/.config/") << brand.identifier() << StringView(u8"/") << brand.identifier() << StringView(u8".toml");
         }
+#endif
     }
     loadConfigFrom(StringView(path), required, 0);
 }
@@ -876,6 +934,11 @@ void OptionsParser::getUnicodeWidths(UnicodeWidths& outWidths) {
         raiseError(StringView(u8"-unicodeWidths: expected a Unicode major version, 0 to match the system"));
     }
     if (version == 0) {
+#if defined(_WIN32)
+        // ConPTY and the Windows 11 console use the modern emoji-width
+        // policy; there is no libc wcwidth to probe on this platform.
+        version = 15;
+#else
         // Match this system's libc: the shells at the pty's far end
         // measure their lines with its wcwidth, and agreeing with it
         // keeps their cursor math on our cells. Probe the two
@@ -885,6 +948,7 @@ void OptionsParser::getUnicodeWidths(UnicodeWidths& outWidths) {
         if (wcwidth((wchar_t)(0x2632)) != 2) {
             version = wcwidth((wchar_t)(0x231a)) == 2 ? 15 : 8;
         }
+#endif
     }
     outWidths = UnicodeWidths((u32)(version));
 }

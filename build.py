@@ -148,7 +148,7 @@ def command(**kwargs):
     return untimed_command(**kwargs)
 
 freetype = pkg_config("freetype2", required=False)
-fontconfig = pkg_config("fontconfig", required=False)
+fontconfig = dependency(enabled=False) if windows else pkg_config("fontconfig", required=False)
 harfbuzz = pkg_config("harfbuzz", required=False)
 brotli_common = pkg_config("libbrotlicommon", required=False)
 simdutf = pkg_config("simdutf >= 6.5.0", required=False)
@@ -184,6 +184,10 @@ if darwin:
     build.cppflags += ["-DHAVE_CORETEXT=1", "-DHAVE_METAL_RENDERER=1"]
 else:
     darwin_backend = dependency()
+
+windows_backend = dependency(
+    ldflags=["-ldwrite", "-lole32", "-luuid", "-luser32", "-lshell32", "-limm32"]
+) if windows else dependency()
 
 threads = dependency(ldflags=["-pthread"])
 
@@ -648,6 +652,7 @@ parser_source = "$(S)/lib/vterm/parser.cpp"
 toml_source = "$(S)/lib/shitty/toml.cpp"
 toml_dump_source = "$(S)/bin/toml_dump/main.cpp"
 parser_perf_source = "$(S)/bin/parser_perf/main.cpp"
+test_mode_source = "$(S)/lib/shitty/test_mode.cpp"
 unit_sources = sorted(build.glob("$(S)/lib/shitty/*_ut.cpp") + build.glob("$(S)/lib/vterm/*_ut.cpp"))
 platform_font_sources = {
     "$(S)/lib/shitty/font_freetype.cpp",
@@ -655,17 +660,27 @@ platform_font_sources = {
 platform_renderer_sources = {
     "$(S)/lib/shitty/render_vk.cpp",
 }
+platform_pty_sources = {
+    "$(S)/lib/shitty/pty.cpp",
+    "$(S)/lib/shitty/pty_windows.cpp",
+}
 enabled_font_sources = set()
 if have_freetype_backend:
     enabled_font_sources.add("$(S)/lib/shitty/font_freetype.cpp")
 enabled_renderer_sources = set()
 if linux or windows:
     enabled_renderer_sources.add("$(S)/lib/shitty/render_vk.cpp")
+enabled_pty_sources = {
+    "$(S)/lib/shitty/pty_windows.cpp"
+    if windows else "$(S)/lib/shitty/pty.cpp"
+}
 all_libshitty_sources = [
     source for source in build.glob("$(S)/lib/shitty/*.cpp") + build.glob("$(S)/lib/vterm/*.cpp")
     if source not in (heap_profile_source, *unit_sources)
+    and (not windows or source != test_mode_source)
     and (source not in platform_font_sources or source in enabled_font_sources)
     and (source not in platform_renderer_sources or source in enabled_renderer_sources)
+    and (source not in platform_pty_sources or source in enabled_pty_sources)
 ]
 if darwin:
     all_libshitty_sources.append({
@@ -718,15 +733,15 @@ libshitty_test_sources = [
     for source in all_libshitty_sources
 ]
 libshitty_deps = [
-    freetype, fontconfig, harfbuzz, darwin_backend, plt, vulkan, wayland_backend, threads, libstd,
+    freetype, fontconfig, harfbuzz, darwin_backend, windows_backend, plt, vulkan, wayland_backend, threads, libstd,
     brotli_common, simdutf,
 ]
 libshitty_test_deps = [
-    freetype, fontconfig, harfbuzz, darwin_backend, plt, vulkan, wayland_backend, threads, libstd,
+    freetype, fontconfig, harfbuzz, darwin_backend, windows_backend, plt, vulkan, wayland_backend, threads, libstd,
     brotli_common, simdutf,
 ]
 libshitty_fuzz_deps = [
-    freetype, fontconfig, harfbuzz, darwin_backend, plt, vulkan, wayland_backend, threads, libstd_external_clock,
+    freetype, fontconfig, harfbuzz, darwin_backend, windows_backend, plt, vulkan, wayland_backend, threads, libstd_external_clock,
     brotli_common, simdutf,
 ]
 
@@ -738,6 +753,7 @@ libshitty = library(
     output="$(B)/libshitty_prod.a",
 )
 
+windows_gui_ldflags = ["-municode", "-mwindows"] if windows else []
 
 st = program(
     srcs=[{
@@ -745,6 +761,7 @@ st = program(
         "inputs": ["$(B)/shitty_icon_data.h"],
     }],
     cxxflags=production_path_flags,
+    ldflags=windows_gui_ldflags,
     deps=[libshitty],
 )
 
@@ -757,6 +774,7 @@ pt = program(
         "inputs": ["$(B)/pretty_icon_data.h"],
     }],
     cxxflags=production_path_flags,
+    ldflags=windows_gui_ldflags,
     deps=[libshitty],
 )
 

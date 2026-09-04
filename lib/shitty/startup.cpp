@@ -11,16 +11,21 @@
 #include <lib/vterm/fatal.h>
 #include <lib/vterm/term_features.h>
 
-#include <pwd.h>
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
-#include <sys/stat.h>
+#if defined(_WIN32)
+    #include <windows.h>
+#else
+    #include <pwd.h>
+    #include <unistd.h>
+    #include <sys/stat.h>
+#endif
 
 using namespace stl;
 
 namespace {
+#if !defined(_WIN32)
     static bool executable(const char* path) {
         struct stat info{};
         return path != nullptr && stat(path, &info) == 0 && (info.st_mode & S_IXUSR);
@@ -88,6 +93,7 @@ namespace {
         endusershell();
         unsetenv("SHELL");
     }
+#endif
 
     static u32 appendString(Buffer& storage, StringView text) {
         const u32 offset = (u32)(storage.used());
@@ -115,7 +121,15 @@ LaunchCommand buildLaunchCommand(int argc, char* argv[], StringView defaultShell
         return command;
     }
 
-    const StringView chosen = argc == 2 ? StringView(argv[1]) : defaultShell;
+    StringView chosen = argc == 2 ? StringView(argv[1]) : defaultShell;
+#if defined(_WIN32)
+    if (chosen.empty()) {
+        chosen = StringView(u8"cmd.exe");
+    }
+    command.executableOffset = appendString(command.storage, chosen);
+    command.offsets.pushBack(command.executableOffset);
+    return command;
+#else
     if (chosen.empty()) {
         raiseError(StringView(u8"empty shell command"));
     }
@@ -138,13 +152,19 @@ LaunchCommand buildLaunchCommand(int argc, char* argv[], StringView defaultShell
     appendString(command.storage, name);
     command.offsets.pushBack(argv0);
     return command;
+#endif
 }
 
 void configureTerminalChildEnvironment(const Brand& brand, const UnicodeWidths& widths) {
     StringBuilder features;
     appendTermFeatures(features, widths);
     features.append("", 1);
+#if defined(_WIN32)
+    if (_putenv_s("TERM", "xterm-256color") != 0
+            || _putenv_s("TERM_FEATURES", (const char*)(features.data())) != 0) {
+#else
     if (setenv("TERM", "xterm-256color", 1) < 0 || setenv("TERM_FEATURES", (const char*)(features.data()), 1) < 0) {
+#endif
         raiseError(StringView(u8"cannot configure terminal child environment"));
     }
     brand.configureVersionEnvironment();

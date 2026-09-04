@@ -17,17 +17,19 @@
 #include <std/sys/throw.h>
 #include <std/lib/vector.h>
 #include <std/mem/obj_pool.h>
-#include <std/sys/event_fd.h>
-
-#include <signal.h>
 #include <plt/poller.h>
 #include <plt/platform.h>
+#if !defined(_WIN32)
+    #include <std/sys/event_fd.h>
+    #include <signal.h>
+#endif
 
 using namespace stl;
 
 namespace {
     struct ConfigImpl;
 
+#if !defined(_WIN32)
     EventFD* reloadEvent = nullptr;
 
     void reloadSignalHandler(int) {
@@ -35,8 +37,13 @@ namespace {
             reloadEvent->signal();
         }
     }
+#endif
 
-    struct ConfigImpl final: public Config, public plt::PollCallback {
+    struct ConfigImpl final: public Config
+#if !defined(_WIN32)
+        , public plt::PollCallback
+#endif
+    {
         explicit ConfigImpl(Composer& composer);
         ~ConfigImpl() noexcept;
 
@@ -44,7 +51,9 @@ namespace {
         void start() override;
         void stop() override;
         void reload() override;
+#if !defined(_WIN32)
         void ready(PollFD) override;
+#endif
 
         Options* load(ObjPool& owner, int* argc, char* argv[], OptionsLoad mode);
         void publish(ObjPool* nextPool, Options* next);
@@ -53,9 +62,11 @@ namespace {
         Composer& composer;
         ObjPool* optionsPool = nullptr;
         Vector<StringView> arguments;
+#if !defined(_WIN32)
         EventFD event;
         plt::PollWaiter waiter;
         struct sigaction previousAction{};
+#endif
         bool started = false;
     };
 }
@@ -102,6 +113,7 @@ void ConfigImpl::start() {
     if (started) {
         return;
     }
+#if !defined(_WIN32)
     waiter.fd = {
         .fd = event.fd(),
         .flags = PollFlag::In,
@@ -119,6 +131,7 @@ void ConfigImpl::start() {
         composer.platform->poller()->cancel(waiter);
         Errno().raise(StringView(u8"can't install SIGUSR1 handler: sigaction()"));
     }
+#endif
     started = true;
 }
 
@@ -126,6 +139,7 @@ void ConfigImpl::stop() {
     if (!started) {
         return;
     }
+#if !defined(_WIN32)
     sigset_t blocked;
     sigset_t previousMask;
     sigemptyset(&blocked);
@@ -135,6 +149,7 @@ void ConfigImpl::stop() {
     reloadEvent = nullptr;
     composer.platform->poller()->cancel(waiter);
     sigprocmask(SIG_SETMASK, &previousMask, nullptr);
+#endif
     started = false;
 }
 
@@ -187,11 +202,13 @@ void ConfigImpl::reload() {
     }
 }
 
+#if !defined(_WIN32)
 void ConfigImpl::ready(PollFD) {
     event.drain();
     composer.platform->poller()->arm(waiter);
     reload();
 }
+#endif
 
 Config* Config::create(Composer& composer) {
     return composer.pool->make<ConfigImpl>(composer);

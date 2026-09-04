@@ -21,6 +21,9 @@ namespace {
     }
 
     static u64 probeSpacingFormats() {
+#if defined(_WIN32)
+        return 0;
+#else
         size_t count = 0;
         const u32* const controls = unicodeSpacingFormatControls(count);
         u64 mask = 0;
@@ -30,6 +33,7 @@ namespace {
             }
         }
         return mask;
+#endif
     }
 
     static size_t spacingFormatIndex(const u32* controls, size_t count, u32 codepoint) {

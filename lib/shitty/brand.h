@@ -25,3 +25,6 @@ struct Brand {
 };
 
 int runMain(Brand& brand, int argc, char* argv[]);
+#if defined(_WIN32)
+int runWindowsMain(Brand& brand);
+#endif

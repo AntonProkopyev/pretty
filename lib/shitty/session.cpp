@@ -153,6 +153,7 @@ namespace {
         bool activatePrevious();
         bool selectOrdinal(size_t ordinal);
         bool close(size_t index) override;
+        PtyExitResult lastExit() const override;
         bool closeActive();
         void publishSessionsChanged();
         void runReaper();
@@ -191,6 +192,7 @@ namespace {
         size_t graveCount_ = 0;
         plt::Fiber* reaper_ = nullptr;
         Vector<u64> endedSessions;
+        PtyExitResult lastExit_;
         u64 nextSessionId_ = 1;
         PtyEofReady eofReady{this};
         plt::LoopWake* eofWake_ = nullptr;
@@ -396,6 +398,10 @@ bool SessionSetImpl::close(size_t index) {
     // The terminal leaves the input chain before its slot is reused, or
     // the chain keeps a node pointing at a record that has moved.
     sessions[index].terminal->deactivate();
+    const PtyExitResult exit = sessions[index].handle->exitResult();
+    if (exit.state != PtyExitState::Running) {
+        lastExit_ = exit;
+    }
     const Grave grave{sessions[index].arena, sessions[index].terminal};
     for (size_t at = index; at + 1 < count_; ++at) {
         sessions.mut(at) = sessions[at + 1];
@@ -431,6 +437,10 @@ bool SessionSetImpl::close(size_t index) {
         reaper_->wake();
     }
     return true;
+}
+
+PtyExitResult SessionSetImpl::lastExit() const {
+    return lastExit_;
 }
 
 void SessionSetImpl::activate(size_t index) {

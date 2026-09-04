@@ -58,7 +58,14 @@ const char* Brand::identifierCString() const {
 
 void Brand::configureVersionEnvironment() const {
     const StringView environment = versionEnvironment();
+#if defined(_WIN32)
+    if (_putenv_s(
+            reinterpret_cast<const char*>(environment.data()),
+            SHITTY_VERSION
+        ) != 0) {
+#else
     if (setenv((const char*)(environment.data()), SHITTY_VERSION, 1) < 0) {
+#endif
         Errno().raise(StringBuilder() << StringView(u8"setenv ") << environment);
     }
 }

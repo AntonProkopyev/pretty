@@ -82,7 +82,7 @@ namespace {
         {InputActions::LineEnd, {InputKey::Right, InputSuper, 0, 0, true}},
         {InputActions::KillLine, {InputKey::Backspace, InputSuper, 0, 0, true}},
         {InputActions::EraseWord, {InputKey::Backspace, InputAlt, 0, 0, true}},
-#elif defined(__linux__)
+#elif defined(__linux__) || defined(_WIN32)
         {InputActions::Copy, {InputKey::Printable, InputControl | InputShift, 'c'}},
         {InputActions::Paste, {InputKey::Printable, InputControl | InputShift, 'v'}},
         {InputActions::IncFontSize, {InputKey::Printable, InputControl | InputShift, '=', '+'}},

@@ -20,6 +20,15 @@
 #include <std/lib/buffer.h>
 #include <std/lib/vector.h>
 #include <std/mem/obj_pool.h>
+
+#if defined(_WIN32)
+    #define WIN32_LEAN_AND_MEAN
+    #define NOMINMAX
+    #include <windows.h>
+    #include <shellapi.h>
+    #include <string>
+    #include <vector>
+#endif
 #include <std/str/builder.h>
 #include <std/str/view.h>
 #include <std/sys/fd.h>
@@ -160,3 +169,48 @@ int runMain(Brand& brand, int argc, char* argv[]) {
     }
     return status;
 }
+
+#if defined(_WIN32)
+int runWindowsMain(Brand& brand) {
+    int count = 0;
+    wchar_t** const wideArguments = CommandLineToArgvW(GetCommandLineW(), &count);
+    if (wideArguments == nullptr || count <= 0) {
+        return 1;
+    }
+    std::vector<std::string> encoded(static_cast<size_t>(count));
+    std::vector<char*> arguments(static_cast<size_t>(count) + 1, nullptr);
+    for (int index = 0; index != count; ++index) {
+        const int size = WideCharToMultiByte(
+            CP_UTF8,
+            0,
+            wideArguments[index],
+            -1,
+            nullptr,
+            0,
+            nullptr,
+            nullptr
+        );
+        if (size <= 0) {
+            LocalFree(wideArguments);
+            return 1;
+        }
+        encoded[index].resize(static_cast<size_t>(size));
+        if (WideCharToMultiByte(
+                CP_UTF8,
+                0,
+                wideArguments[index],
+                -1,
+                encoded[index].data(),
+                size,
+                nullptr,
+                nullptr
+            ) != size) {
+            LocalFree(wideArguments);
+            return 1;
+        }
+        arguments[index] = encoded[index].data();
+    }
+    LocalFree(wideArguments);
+    return runMain(brand, count, arguments.data());
+}
+#endif
