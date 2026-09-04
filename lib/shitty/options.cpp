@@ -1242,12 +1242,20 @@ void OptionsParser::parse() {
         vulkanInfo = getBool("vulkanInfo");
         vulkanBlit = getBool("vulkanBlit");
         if (!get("shell", shell)) {
+#if defined(_WIN32)
+            if (const char* env = getenv("COMSPEC")) {
+#else
             if (const char* env = getenv("SHELL")) {
+#endif
                 shell = pool.intern(StringView(env));
             }
         }
         if (shell.empty()) {
+#if defined(_WIN32)
+            shell = StringView(u8"cmd.exe");
+#else
             shell = StringView(u8"bash");
+#endif
         }
         get("title", vt.title, &titleSource);
         StringView titleFallback;

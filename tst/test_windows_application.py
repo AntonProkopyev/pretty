@@ -19,6 +19,8 @@ class WindowsApplicationContractTests(unittest.TestCase):
         self.assertIn("-mwindows", build)
         self.assertIn("-municode", build)
         self.assertIn("CommandLineToArgvW", main)
+        self.assertIn("AttachConsole", main)
+        self.assertIn("startup.log", main)
         self.assertIn("wWinMain", shitty)
         self.assertIn("wWinMain", pretty)
 
@@ -27,6 +29,7 @@ class WindowsApplicationContractTests(unittest.TestCase):
 
         self.assertIn("SHGetKnownFolderPath", options)
         self.assertIn("FOLDERID_LocalAppData", options)
+        self.assertIn('getenv("COMSPEC")', options)
 
     def test_windows_shutdown_returns_typed_child_exit(self):
         application = (ROOT / "lib/shitty/application.cpp").read_text()

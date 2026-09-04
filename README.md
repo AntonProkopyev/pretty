@@ -5,14 +5,14 @@
 [![release](https://img.shields.io/github/v/release/pg83/shitty)](https://github.com/pg83/shitty/releases/latest)
 [![brew](https://img.shields.io/badge/brew-pg83%2Ftap%2Fshitty-2a6e3f?logo=homebrew)](https://github.com/pg83/homebrew-tap)
 [![license](https://img.shields.io/badge/license-MIT%20%7C%20GPL--3.0-blue)](LICENSE)
-[![platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux-8a8a8a)](#requirements)
+[![platforms](https://img.shields.io/badge/platforms-Windows%2011%20%7C%20macOS%20%7C%20Linux-8a8a8a)](#requirements)
 [![speed](https://img.shields.io/badge/ascii-118%20MiB%2Fs%20%C2%B7%201.2%C3%97%20alacritty-ffb000)](#performance)
 
 **Blazingly fast. Memory-unsafe and faster than yours.**
 
 Shitty is built for low latency, fast startup, and predictable resource use.
 It keeps terminal state on the CPU and renders cells with native compute
-backends: Vulkan on Linux and Metal on macOS.
+backends: Vulkan on Windows and Linux, and Metal on macOS.
 
 The same terminal is built with two user-facing brands. `st` is Shitty;
 `pt` is Pretty, for people who prefer a polite name. They share all terminal
@@ -73,8 +73,8 @@ equalized setup from inside every terminal before measuring anything.
 
 ## Features
 
-- Native macOS and Linux/Wayland frontends, with Metal and Vulkan compute
-  rendering, HiDPI support, and true Wayland fractional scaling.
+- Native Windows 11, macOS, and Linux/Wayland frontends. Windows and Linux
+  use Vulkan compute; macOS uses Metal. All three support HiDPI.
 - VT52 through VT5xx and ECMA-48 controls, ISO-2022 character sets, and the
   widely used xterm extensions.
 - Primary and alternate screens, configurable primary-screen scrollback,
@@ -107,8 +107,8 @@ equalized setup from inside every terminal before measuring anything.
   layout-stable chord remapping.
 - X10, VT200, button-event, any-event, UTF-8, SGR, SGR-pixel, urxvt, and DEC
   locator mouse protocols, plus alternate-screen wheel-to-cursor mode.
-- Native Cocoa and Wayland `text-input-v3` IME composition, including visible
-  preedit text and cursor ranges.
+- Native Cocoa, Win32 IMM, and Wayland `text-input-v3` IME composition,
+  including visible preedit text and cursor ranges.
 - Character, word, line, and rectangular mouse selection; drag autoscroll;
   primary selection; system clipboard; bracketed paste; and optional
   automatic primary-to-clipboard copying.
@@ -126,14 +126,14 @@ equalized setup from inside every terminal before measuring anything.
 - `XTVERSION`, `XTGETTCAP`, primary/secondary/tertiary device attributes,
   DECRQSS state reports, iTerm2 capability reporting, and `TERM_FEATURES` for
   feature discovery without terminal-name guessing.
-- Native file/URI and text drag-and-drop into the terminal on macOS and
-  Wayland.
+- Native file/URI and text drag-and-drop into the terminal on Windows,
+  macOS, and Wayland.
 - A TOML configuration with imports, environment expansion, CLI overrides,
   colour schemes, fallback lists, and atomic `SIGUSR1` runtime reload; invalid
   reloads leave the current configuration active.
 - Lazy glyph rasterization, a persistent GPU glyph cache, damage-driven
   rendering, and transactional, flicker-free resize frames.
-- One self-contained binary per brand, no generic windowing toolkit, and
+- One native executable per brand, no generic windowing toolkit, and
   conservative clipboard and host-window access policies by default.
 
 Shitty uses UTF-8 internally and exports `TERM=xterm-256color` to child
@@ -150,7 +150,7 @@ know: on macOS install LLVM from Homebrew and point the build at it
 - Python 3, Ragel 6 or 7, and `glslangValidator`;
 - librsvg (`rsvg-convert`), which renders the icon at build time;
 - pkg-config;
-- POSIX threads and PTY support.
+- POSIX threads and PTY support on Linux and macOS.
 
 Unicode 17 properties are generated at build time from the UCD files bundled
 in `ext/unicode`; no system Unicode library is required.
@@ -165,6 +165,10 @@ The exact `libstd` revision used by Shitty is bundled in
 Linux additionally requires FreeType, HarfBuzz, Wayland client headers,
 xkbcommon, `wayland-scanner`, and Vulkan headers and loader. macOS requires
 SPIRV-Cross and uses CoreText, Cocoa, Metal, and IOSurface from the system SDK.
+
+The Windows release supports native Windows 11 x64. It uses Win32, Vulkan,
+DirectWrite font discovery, and ConPTY. A Vulkan 1.1 driver is required.
+The ZIP includes the required runtime DLLs; MSYS2 and Cygwin are not required.
 
 liburing and xxhash are optional and need no configuration: `libstd`
 detects their headers and the build links whatever they turn on, giving
@@ -204,6 +208,20 @@ Common build options:
 CPPFLAGS=-DDEBUG ./build
 ```
 
+Windows artifacts use the pinned llvm-mingw and vcpkg revisions in
+[`dev/windows`](dev/windows). Build them on Linux with the Windows target:
+
+```sh
+VCPKG_INSTALLED=/path/to/vcpkg-installed \
+PKG_CONFIG_LIBDIR=/path/to/vcpkg-installed/x64-mingw-dynamic/lib/pkgconfig \
+CC=/path/to/llvm-mingw/bin/x86_64-w64-mingw32-clang \
+CXX=/path/to/llvm-mingw/bin/x86_64-w64-mingw32-clang++ \
+./build --target=x86_64-w64-windows-gnu st pt
+```
+
+The release ZIP is the supported Windows delivery path. It contains the
+required DLLs, licenses, and example configurations.
+
 ## Run
 
 Start the default shell:
@@ -218,6 +236,13 @@ Run a command:
 
 ```sh
 ./st -e tmux new-session
+```
+
+On Windows, run `st.exe` or `pt.exe`. The default command comes from
+`%COMSPEC%`. Select PowerShell explicitly when wanted:
+
+```powershell
+.\st.exe -e pwsh.exe
 ```
 
 Choose the initial terminal size and scrollback capacity:
@@ -250,8 +275,9 @@ takes precedence.
 ### Config file
 
 Every configurable option can also be set in `~/.config/shitty/shitty.toml`
-(`$XDG_CONFIG_HOME` is honored), or in an explicit file passed with
-`-config path.toml`. Keys are the option names from `-help` and
+(`$XDG_CONFIG_HOME` is honored). Windows uses
+`%LOCALAPPDATA%\shitty\shitty.toml`. An explicit `-config path.toml` has
+priority on every platform. Keys are the option names from `-help` and
 `-listres`; the file is TOML, parsed by a built-in parser that passes the
 full `toml-test` 1.0 suite. `${NAME}` anywhere in the file expands to the
 process environment variable before parsing. Command-line flags take
@@ -259,7 +285,9 @@ precedence over the file, and a broken or unknown entry prints a warning
 to stderr without keeping the terminal from starting. The repository's
 [`shitty.toml`](bin/st/shitty.toml) is a working example that documents every
 option, including the command-line-only controls. Pretty uses
-`~/.config/pretty/pretty.toml` and the equivalent [`pretty.toml`](bin/pt/pretty.toml):
+`~/.config/pretty/pretty.toml` on Unix and
+`%LOCALAPPDATA%\pretty\pretty.toml` on Windows. Its example is
+[`pretty.toml`](bin/pt/pretty.toml):
 
 ```toml
 fontsize = 16
@@ -270,7 +298,7 @@ boldColors = false
 color4 = "#3465a4"
 ```
 
-Send `SIGUSR1` to a running terminal to parse the same config sources again.
+On Linux and macOS, send `SIGUSR1` to parse the same config sources again.
 Command-line overrides are reapplied, and a valid result is published as one
 new immutable snapshot; a syntax or value error leaves the current snapshot
 active. Runtime components then reapply their own configuration (including
@@ -427,6 +455,12 @@ Shitty does not currently implement bidirectional text layout or inline
 graphics protocols such as Kitty graphics or iTerm2 inline images. Sixel is
 supported. Some historical DEC and xterm extensions are intentionally outside
 the supported profile.
+
+Windows requires Windows 11 x64 and a Vulkan 1.1 driver. Windows 10, ARM64,
+and x86 are not supported. Win32 IME lifecycle and candidate placement are
+covered, but composition-content automation still needs a host with an
+installed IME. The release has no installer; extract the ZIP and run either
+executable in place.
 
 ## License transition and authorship
 
