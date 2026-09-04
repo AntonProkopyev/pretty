@@ -526,13 +526,15 @@ input_keys = command(
 )
 
 
-def icon_png(name, svg, png):
+def icon_png(name, svg, png, size=1024):
     # The rasterizer comes from the ambient environment: rsvg-convert
     # when present, otherwise svg2png, which has no output flag and
     # drops <input name>.png into its working directory.
     if shutil.which("rsvg-convert") is not None or shutil.which("svg2png") is None:
-        cmd = ["rsvg-convert", "-w", "1024", "-h", "1024", svg, "-o", png]
+        cmd = ["rsvg-convert", "-w", str(size), "-h", str(size), svg, "-o", png]
     else:
+        if size != 1024:
+            raise RuntimeError("Windows icon generation requires rsvg-convert")
         produced = "$(B)/" + Path(svg).name + ".png"
         cmd = [
             ["svg2png", svg, "1024x1024"],
@@ -594,6 +596,68 @@ pretty_icon_data = command(
     descr="IC",
     color="magenta",
 )
+
+
+shitty_windows_resource = None
+pretty_windows_resource = None
+if windows:
+    windows_manifest = "$(S)/dev/windows/app.manifest"
+    shitty_windows_png = icon_png(
+        "shitty_windows_png",
+        "$(S)/bin/st/shitty.svg",
+        "$(B)/shitty-windows.png",
+        256,
+    )
+    pretty_windows_png = icon_png(
+        "pretty_windows_png",
+        "$(S)/bin/pt/pretty.svg",
+        "$(B)/pretty-windows.png",
+        256,
+    )
+    shitty_windows_resource = command(
+        name="shitty_windows_resource",
+        inputs=[
+            "$(S)/dev/windows/make_resource.py",
+            "$(S)/dev/windows/png_to_ico.py",
+            windows_manifest,
+            "$(B)/shitty-windows.png",
+        ],
+        outputs=["$(B)/shitty.rc", "$(B)/shitty.ico", "$(B)/shitty.manifest"],
+        deps=[shitty_windows_png],
+        cmd=[
+            sys.executable,
+            "$(S)/dev/windows/make_resource.py",
+            "--output", "$(B)/shitty.rc",
+            "--png", "$(B)/shitty-windows.png",
+            "--icon-output", "$(B)/shitty.ico",
+            "--manifest", windows_manifest,
+            "--manifest-output", "$(B)/shitty.manifest",
+        ],
+        descr="RC",
+        color="magenta",
+    )
+    pretty_windows_resource = command(
+        name="pretty_windows_resource",
+        inputs=[
+            "$(S)/dev/windows/make_resource.py",
+            "$(S)/dev/windows/png_to_ico.py",
+            windows_manifest,
+            "$(B)/pretty-windows.png",
+        ],
+        outputs=["$(B)/pretty.rc", "$(B)/pretty.ico", "$(B)/pretty.manifest"],
+        deps=[pretty_windows_png],
+        cmd=[
+            sys.executable,
+            "$(S)/dev/windows/make_resource.py",
+            "--output", "$(B)/pretty.rc",
+            "--png", "$(B)/pretty-windows.png",
+            "--icon-output", "$(B)/pretty.ico",
+            "--manifest", windows_manifest,
+            "--manifest-output", "$(B)/pretty.manifest",
+        ],
+        descr="RC",
+        color="magenta",
+    )
 
 
 font_coverage = command(
@@ -775,11 +839,20 @@ libshitty = library(
 
 windows_gui_ldflags = ["-municode", "-mwindows"] if windows else []
 
+shitty_program_sources = [{
+    "src": shitty_main_source,
+    "inputs": ["$(B)/shitty_icon_data.h"],
+}]
+pretty_program_sources = [{
+    "src": pretty_main_source,
+    "inputs": ["$(B)/pretty_icon_data.h"],
+}]
+if windows:
+    shitty_program_sources.append("$(B)/shitty.rc")
+    pretty_program_sources.append("$(B)/pretty.rc")
+
 st = program(
-    srcs=[{
-        "src": shitty_main_source,
-        "inputs": ["$(B)/shitty_icon_data.h"],
-    }],
+    srcs=shitty_program_sources,
     cxxflags=production_path_flags,
     ldflags=windows_gui_ldflags,
     deps=[libshitty],
@@ -789,10 +862,7 @@ st = program(
 pt = program(
     name="pt",
     output="$(B)/pt",
-    srcs=[{
-        "src": pretty_main_source,
-        "inputs": ["$(B)/pretty_icon_data.h"],
-    }],
+    srcs=pretty_program_sources,
     cxxflags=production_path_flags,
     ldflags=windows_gui_ldflags,
     deps=[libshitty],

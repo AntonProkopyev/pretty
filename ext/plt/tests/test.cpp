@@ -243,7 +243,6 @@ namespace plt::test {
         .set_buffer_scale = [](wl_client*, wl_resource*, i32) {},
         .damage_buffer = [](wl_client*, wl_resource*, i32, i32, i32, i32) {},
         .offset = [](wl_client*, wl_resource*, i32, i32) {},
-        .get_release = nullptr,
     };
 
     const struct wl_region_interface regionImplementation{
@@ -256,7 +255,12 @@ namespace plt::test {
         .create_surface =
             [](wl_client* client, wl_resource* resource, u32 id) {
         auto* const server = static_cast<Server*>(wl_resource_get_user_data(resource));
-        wl_resource* const surfaceResource = wl_resource_create(client, &wl_surface_interface, min(6, wl_resource_get_version(resource)), id);
+        wl_resource* const surfaceResource = wl_resource_create(
+            client,
+            &wl_surface_interface,
+            min(wl_surface_interface.version, wl_resource_get_version(resource)),
+            id
+        );
         auto* const surface = new Surface{
             .server = server,
             .surface = surfaceResource,
@@ -269,7 +273,6 @@ namespace plt::test {
         wl_resource* const region = wl_resource_create(client, &wl_region_interface, wl_resource_get_version(resource), id);
         wl_resource_set_implementation(region, &regionImplementation, nullptr, nullptr);
     },
-        .release = destroyResource,
     };
 
     const struct wl_pointer_interface pointerImplementation{
@@ -442,7 +445,6 @@ namespace plt::test {
         server->dataDevice = wl_resource_create(client, &wl_data_device_interface, wl_resource_get_version(resource), id);
         wl_resource_set_implementation(server->dataDevice, &dataDeviceImplementation, server, nullptr);
     },
-        .release = destroyResource,
     };
 
     const struct zwp_primary_selection_source_v1_interface primarySourceImplementation{
@@ -668,9 +670,6 @@ namespace plt::test {
         server->textInputPendingEnabled = false;
         server->textInputPendingDisabled = false;
     },
-        .set_available_actions = [](wl_client*, wl_resource*, wl_array*) {},
-        .show_input_panel = [](wl_client*, wl_resource*) {},
-        .hide_input_panel = [](wl_client*, wl_resource*) {},
     };
 
     const struct zwp_text_input_manager_v3_interface textInputManagerImplementation{
@@ -807,9 +806,21 @@ namespace plt::test {
     Server::Server() {
         display = wl_display_create();
         loop = wl_display_get_event_loop(display);
-        wl_global_create(display, &wl_compositor_interface, 6, this, bindCompositor);
+        wl_global_create(
+            display,
+            &wl_compositor_interface,
+            wl_compositor_interface.version,
+            this,
+            bindCompositor
+        );
         seatGlobal = wl_global_create(display, &wl_seat_interface, 8, this, bindSeat);
-        dataManagerGlobal = wl_global_create(display, &wl_data_device_manager_interface, 3, this, bindDataManager);
+        dataManagerGlobal = wl_global_create(
+            display,
+            &wl_data_device_manager_interface,
+            wl_data_device_manager_interface.version,
+            this,
+            bindDataManager
+        );
         wl_global_create(display, &xdg_wm_base_interface, 6, this, bindWmBase);
         wl_global_create(display, &wp_viewporter_interface, 1, this, bindViewporter);
         fractionalScaleGlobal = wl_global_create(display, &wp_fractional_scale_manager_v1_interface, 1, this, bindFractional);

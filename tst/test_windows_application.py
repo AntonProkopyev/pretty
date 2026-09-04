@@ -45,6 +45,32 @@ class WindowsApplicationContractTests(unittest.TestCase):
         self.assertIn("nativeHandles", poller)
         self.assertIn("MAXIMUM_WAIT_OBJECTS", poller)
 
+    def test_release_embeds_manifest_and_brand_icons(self):
+        build = (ROOT / "build.py").read_text()
+        manifest = (ROOT / "dev/windows/app.manifest").read_text()
+        resource = (ROOT / "dev/windows/make_resource.py").read_text()
+
+        self.assertIn("shitty_windows_resource", build)
+        self.assertIn("pretty_windows_resource", build)
+        self.assertIn("PerMonitorV2", manifest)
+        self.assertIn("supportedOS", manifest)
+        self.assertIn("RT_MANIFEST", resource)
+        self.assertIn(" ICON ", resource)
+
+    def test_windows_config_file_boundary_uses_utf16(self):
+        source = (ROOT / "ext/libstd/std/ios/fs_utils.cpp").read_text()
+
+        self.assertIn("MultiByteToWideChar", source)
+        self.assertIn("_wopen", source)
+
+    def test_windows_config_reload_uses_input_action(self):
+        bindings = (ROOT / "lib/shitty/input_bindings.h").read_text()
+        application = (ROOT / "lib/shitty/application.cpp").read_text()
+
+        self.assertIn("ReloadConfig", bindings)
+        self.assertIn("InputActions::ReloadConfig", application)
+        self.assertIn("composer.config->reload()", application)
+
 
 if __name__ == "__main__":
     unittest.main()

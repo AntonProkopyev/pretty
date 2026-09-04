@@ -134,6 +134,19 @@ namespace {
         ApplicationImpl* application;
     };
 
+    struct CallConfigReload final: public Listener {
+        explicit CallConfigReload(Composer& composer_)
+            : composer(composer_)
+        {
+        }
+
+        void onListen(void*) override {
+            composer.config->reload();
+        }
+
+        Composer& composer;
+    };
+
     struct ApplicationImpl final: public Application, public plt::WindowEvents, public plt::FrameCallback {
         explicit ApplicationImpl(Composer& composer);
         ~ApplicationImpl();
@@ -257,9 +270,11 @@ void ApplicationImpl::wire() {
     composer.contentScaleChangedListeners.pushBack(composer.pool->make<CallContentScaleChanged>(this));
     composer.fontChangedListeners.pushBack(composer.pool->make<CallFontChanged>(this));
     composer.configChangedListeners.pushBack(composer.pool->make<CallConfigChanged>(this));
+    composer.reloadConfigListeners.pushBack(composer.pool->make<CallConfigReload>(composer));
     composer.inputBindings->add(InputActions::IncFontSize, &composer.fontIncListeners);
     composer.inputBindings->add(InputActions::DecFontSize, &composer.fontDecListeners);
     composer.inputBindings->add(InputActions::ResetFontSize, &composer.fontResetListeners);
+    composer.inputBindings->add(InputActions::ReloadConfig, &composer.reloadConfigListeners);
 }
 
 ApplicationImpl::~ApplicationImpl() {

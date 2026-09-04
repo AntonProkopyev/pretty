@@ -355,6 +355,7 @@ jobs:
           cp "$toolchain/x86_64-w64-mingw32/bin/libunwind.dll" "$runtime/"
           cp "$(x86_64-w64-mingw32-g++ -print-file-name=libgcc_s_seh-1.dll)" "$runtime/"
           cp "$(x86_64-w64-mingw32-g++ -print-file-name=libstdc++-6.dll)" "$runtime/"
+          cp "$(x86_64-w64-mingw32-g++ -print-file-name=libwinpthread-1.dll)" "$runtime/"
           export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
           python3 dev/windows/package.py \
             --runtime-dir "$runtime" \
@@ -363,6 +364,7 @@ jobs:
             --llvm-license "$toolchain/LICENSE.TXT" \
             --gcc-copyright /usr/share/doc/g++-mingw-w64-x86-64/copyright \
             --objdump "$toolchain/bin/llvm-objdump" \
+            --readobj "$toolchain/bin/llvm-readobj" \
             --output "$RUNNER_TEMP/windows-release/shitty-windows-x86_64.zip"
 
       - name: Upload Windows ZIP
