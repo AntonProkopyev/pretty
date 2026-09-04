@@ -119,7 +119,7 @@ equalized setup from inside every terminal before measuring anything.
   separately gated and disabled by default.
 - Multiple independent PTY tabs in one window, with keyboard and direct-index
   navigation, per-tab titles, background-session isolation, and a clickable
-  title-bar tab strip on macOS.
+  title-bar tab strip on macOS and Windows.
 - OSC 7 working-directory and OSC 133 semantic shell integration, OSC 9 and
   OSC 99 attention notifications, OSC 9;4 progress states, light/dark scheme
   reports, and in-band cell/pixel resize reports.
@@ -299,11 +299,23 @@ color4 = "#3465a4"
 ```
 
 On Linux and macOS, send `SIGUSR1` to parse the same config sources again.
+On Windows, press `Ctrl+Shift+R`.
 Command-line overrides are reapplied, and a valid result is published as one
 new immutable snapshot; a syntax or value error leaves the current snapshot
 active. Runtime components then reapply their own configuration (including
 fonts, terminal colours and defaults, borders, and key remaps). Options used
 only to create process or window state take effect on the next launch.
+
+Windows accepts two additional startup settings:
+
+```toml
+cursorShape = "bar"
+globalHotkey = "ctrl+`"
+```
+
+`cursorShape` accepts `block`, `underline`, or `bar`. The optional global
+hotkey shows or hides the first Shitty window that registers it. Windows also
+uses Ctrl+Shift+Backtick for a new tab and Ctrl+PageUp/PageDown to switch tabs.
 
 ### Key remapping
 
@@ -385,6 +397,19 @@ install -Dm644 bin/pt/pretty.svg \
 
 The desktop files resolve `st`/`pt` through `PATH` and their icons through
 the active icon theme.
+
+### Windows
+
+Extract the release ZIP and install it for the current user:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+The script copies the package to `%LOCALAPPDATA%\Programs\Shitty`, creates a
+desktop shortcut, and registers **Open in Shitty** for folders and folder
+backgrounds. It loads `config\shitty.toml`; edit that file before installation
+or change the installed copy afterward.
 
 ### Nix
 
