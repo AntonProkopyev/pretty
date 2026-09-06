@@ -10,6 +10,7 @@
 
 #include "pty.h"
 #include "startup.h"
+#include <lib/vterm/fatal.h>
 
 #include <plt/fiber.h>
 #include <plt/loop_wake.h>
@@ -288,13 +289,25 @@ namespace {
         return result;
     }
 
-    std::wstring commandLine(const LaunchCommand& command) {
+    std::wstring commandLine(const LaunchCommand& command, bool wsl) {
         std::wstring result;
+        bool launcherArguments = true;
         for (size_t index = 0; index != command.offsets.length(); ++index) {
+            const std::wstring argument = wide(command.argument(index));
+            if (index != 0 && wsl && launcherArguments && command.directory.used() != 0 && argument == L"--cd") {
+                ++index;
+                continue;
+            }
+            if (argument == L"--" || argument == L"--exec" || argument == L"-e") {
+                launcherArguments = false;
+            }
             if (!result.empty()) {
                 result.push_back(L' ');
             }
-            result += quoteArgument(wide(command.argument(index)));
+            result += quoteArgument(argument);
+            if (index == 0 && wsl && command.directory.used() != 0) {
+                result += L" --cd " + quoteArgument(wide(command.workingDirectory()));
+            }
         }
         return result;
     }
@@ -441,8 +454,15 @@ namespace {
         startup.StartupInfo.cb = sizeof(startup);
         startup.lpAttributeList = attributes.list;
         PROCESS_INFORMATION information{};
-        std::wstring line = commandLine(command);
-        STD_INSIST(CreateProcessW(
+        const std::wstring executable = wide(command.executable());
+        const std::wstring name = executable.substr(executable.find_last_of(L"/\\") + 1);
+        const bool wsl = _wcsicmp(name.c_str(), L"wsl.exe") == 0 || _wcsicmp(name.c_str(), L"wsl") == 0;
+        std::wstring directory = command.directory.used() == 0 || wsl ? L"" : wide(command.workingDirectory());
+        if (directory.size() > 2 && directory[0] == L'/' && directory[2] == L':') {
+            directory.erase(0, 1);
+        }
+        std::wstring line = commandLine(command, wsl);
+        if (CreateProcessW(
             nullptr,
             line.data(),
             nullptr,
@@ -450,10 +470,12 @@ namespace {
             FALSE,
             EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
             nullptr,
-            nullptr,
+            directory.empty() ? nullptr : directory.c_str(),
             &startup.StartupInfo,
             &information
-        ) != 0);
+        ) == 0) {
+            raiseError(StringView(u8"Cannot start tab; Windows error "), (u32)(GetLastError()));
+        }
         process = WinHandle(information.hProcess);
         processThread = WinHandle(information.hThread);
         inputRead.close();

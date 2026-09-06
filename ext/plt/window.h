@@ -106,6 +106,13 @@ namespace plt {
         virtual void select(size_t index) = 0;
         virtual void close(size_t index) = 0;
         virtual void open() = 0;
+        virtual u64 identity(size_t index) const { return index + 1; }
+        virtual bool pinned(size_t) const { return false; }
+        virtual void pin(size_t, bool) {}
+        virtual void rename(size_t, stl::StringView) {}
+        virtual void move(size_t, size_t) {}
+        virtual stl::StringView directory(size_t) const { return {}; }
+        virtual bool openNear(size_t) { return false; }
     };
 
     struct WindowOptions {

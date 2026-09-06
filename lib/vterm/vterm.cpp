@@ -1067,6 +1067,8 @@ namespace {
         // The title last offered to the host. It may be the current working
         // directory while the explicit window title is still the default.
         Buffer presentedTitle;
+        Buffer currentDirectory;
+        StringView directory() const override;
         bool titleSet = false;
         // The foreground process name last seen on the pty; a change of
         // it is what retires the previous foreground's title.
@@ -6608,6 +6610,11 @@ void VtermImpl::refreshForegroundName() {
 }
 
 void VtermImpl::publishCwd(StringView path) {
+    if (path.empty() || path.length() > 32767 || memchr(path.data(), 0, path.length()) != nullptr) {
+        return;
+    }
+    currentDirectory.reset();
+    currentDirectory.append(path.data(), path.length());
     if (trace != nullptr) {
         trace->cwd(path);
     }
@@ -6616,6 +6623,10 @@ void VtermImpl::publishCwd(StringView path) {
         presentedTitle.append(path.data(), path.length());
         notifyTitleChanged(stringView(presentedTitle));
     }
+}
+
+StringView VtermImpl::directory() const {
+    return StringView(currentDirectory);
 }
 
 void VtermImpl::publishNotify(StringView id, StringView title, StringView body, bool close) {

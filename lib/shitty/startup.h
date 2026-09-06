@@ -22,9 +22,12 @@ struct LaunchCommand {
     stl::Buffer storage;
     stl::Vector<u32> offsets;
     u32 executableOffset = 0;
+    stl::Buffer directory;
 
     const char* executable() const;
     const char* argument(size_t index) const;
+    LaunchCommand inDirectory(stl::StringView path) const;
+    const char* workingDirectory() const;
 };
 
 LaunchCommand buildLaunchCommand(int argc, char* argv[], stl::StringView defaultShell, bool login);

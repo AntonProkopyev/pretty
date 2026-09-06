@@ -25,6 +25,7 @@ libplt_win32 = import_build(
 )
 libplt_win32.ldflags += [
     "-lgdi32",
+    "-lcomctl32",
     "-luser32",
     "-lshell32",
     "-lole32",

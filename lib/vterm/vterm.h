@@ -169,6 +169,7 @@ struct TerminalUpdate {
 };
 
 struct Vterm {
+    virtual stl::StringView directory() const { return {}; }
     // Makes the terminal's presentation current and repaints it. The
     // repaint is not optional: a renderer may retain cells from the
     // presentation it consumed before this one.

@@ -111,6 +111,25 @@ const char* LaunchCommand::argument(size_t index) const {
     return (const char*)(storage.data()) + offsets[index];
 }
 
+LaunchCommand LaunchCommand::inDirectory(StringView path) const {
+    if (path.empty() || path.length() > 32767 || memchr(path.data(), 0, path.length()) != nullptr) {
+        raiseError(StringView(u8"invalid launch directory"));
+    }
+    LaunchCommand command;
+    command.storage.append(storage.data(), storage.used());
+    for (const u32 offset : offsets) {
+        command.offsets.pushBack(offset);
+    }
+    command.executableOffset = executableOffset;
+    command.directory.append(path.data(), path.length());
+    command.directory.cStr();
+    return command;
+}
+
+const char* LaunchCommand::workingDirectory() const {
+    return directory.used() == 0 ? nullptr : reinterpret_cast<const char*>(directory.data());
+}
+
 LaunchCommand buildLaunchCommand(int argc, char* argv[], StringView defaultShell, bool login) {
     LaunchCommand command;
     if (argc > 2 && StringView(argv[1]) == StringView(u8"-e")) {
@@ -168,4 +187,18 @@ void configureTerminalChildEnvironment(const Brand& brand, const UnicodeWidths& 
         raiseError(StringView(u8"cannot configure terminal child environment"));
     }
     brand.configureVersionEnvironment();
+#if defined(_WIN32)
+    // WSL imports only explicitly listed Windows variables. The shell hook
+    // uses this marker to report its directory only inside this terminal.
+    const char* existing = getenv("WSLENV");
+    const StringView marker = brand.versionEnvironment();
+    StringBuilder environment;
+    if (existing != nullptr && *existing != '\0') {
+        environment << StringView(existing) << StringView(u8":");
+    }
+    environment << marker;
+    if (_putenv_s("WSLENV", environment.cStr()) != 0) {
+        raiseError(StringView(u8"cannot configure WSL shell integration"));
+    }
+#endif
 }

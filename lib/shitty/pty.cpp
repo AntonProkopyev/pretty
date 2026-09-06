@@ -914,6 +914,9 @@ PtyHandle* PtyImpl::spawn(ObjPool& owner, const LaunchCommand& command) {
         }
         close(master);
         redirectFds(slave);
+        if (command.directory.used() != 0 && chdir(command.workingDirectory()) != 0) {
+            childError("Error: chdir");
+        }
 
         struct termios term;
         if (tcgetattr(STDIN_FILENO, &term) < 0) {

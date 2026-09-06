@@ -11,6 +11,7 @@
 #include "options.h"
 #include "composer.h"
 #include "debug_trace.h"
+#include "startup.h"
 #include "input_bindings.h"
 
 #include <lib/vterm/vterm.h>
@@ -23,6 +24,7 @@
 #include <std/mem/obj_pool.h>
 
 #include <stdio.h>
+#include <string.h>
 #include <plt/fiber.h>
 #include <plt/poller.h>
 #include <plt/window.h>
@@ -129,7 +131,15 @@ namespace {
         Vterm* activeTerminal() const override;
         size_t count() const override;
         size_t activeIndex() const override;
+        u64 identity(size_t index) const override;
         StringView title(size_t index) const override;
+        bool pinned(size_t index) const override;
+        void pin(size_t index, bool value) override;
+        void rename(size_t index, StringView title) override;
+        void move(size_t from, size_t to) override;
+        StringView directory(size_t index) const override;
+        bool newSessionNear(size_t index) override;
+        void open(const LaunchCommand& command);
 
         bool key(const plt::KeyInput& input) override;
         bool text(const plt::TextInput& input) override;
@@ -173,6 +183,8 @@ namespace {
             // The session's last published title, arena-owned so the
             // record stays trivially copyable when slots shift.
             stl::Buffer* title = nullptr;
+            stl::Buffer* customTitle = nullptr;
+            bool pinned = false;
         };
 
         struct Grave {
@@ -358,18 +370,22 @@ SessionSetImpl::~SessionSetImpl() noexcept {
 }
 
 void SessionSetImpl::newSession() {
+    open(*composer.launch);
+}
+
+void SessionSetImpl::open(const LaunchCommand& command) {
     ObjPool* const arena = ObjPool::fromMemoryRaw();
     PtyHandle* handle;
     Vterm* terminal;
     try {
-        handle = composer.pty->spawn(*arena, *composer.launch);
+        handle = composer.pty->spawn(*arena, command);
         handle->resize(ptySize());
         terminal = Vterm::create(*arena, composer.geometry, composer.vtConfig, composer.extras, *composer.smallObjects, *composer.scheduler, *composer.host, *handle, composer.vtermTraceFactory);
     } catch (...) {
         delete arena;
         throw;
     }
-    const Session session{terminal, handle, nextSessionId_++, arena, arena->make<Buffer>()};
+    const Session session{terminal, handle, nextSessionId_++, arena, arena->make<Buffer>(), arena->make<Buffer>(), false};
     if (count_ < sessions.length()) {
         sessions.mut(count_) = session;
     } else {
@@ -726,7 +742,85 @@ StringView SessionSetImpl::title(size_t index) const {
     if (index >= count_ || sessions[index].title == nullptr) {
         return {};
     }
-    return StringView(*sessions[index].title);
+    return StringView(sessions[index].customTitle->used() == 0 ? *sessions[index].title : *sessions[index].customTitle);
+}
+
+u64 SessionSetImpl::identity(size_t index) const {
+    return index < count_ ? sessions[index].id : 0;
+}
+
+bool SessionSetImpl::pinned(size_t index) const {
+    return index < count_ && sessions[index].pinned;
+}
+
+void SessionSetImpl::rename(size_t index, StringView title) {
+    if (index >= count_ || title.length() > 1024 || (!title.empty() && memchr(title.data(), 0, title.length()) != nullptr)) {
+        return;
+    }
+    sessions[index].customTitle->reset();
+    sessions[index].customTitle->append(title.data(), title.length());
+    publishSessionsChanged();
+}
+
+void SessionSetImpl::move(size_t from, size_t to) {
+    if (from >= count_ || to >= count_ || from == to) {
+        return;
+    }
+    size_t pins = 0;
+    for (size_t at = 0; at != count_; ++at) {
+        pins += sessions[at].pinned;
+    }
+    to = sessions[from].pinned ? (to < pins ? to : pins - 1) : (to < pins ? pins : to);
+    const u64 activeId = sessions[active_].id;
+    const Session moved = sessions[from];
+    for (size_t at = from; at < to; ++at) {
+        sessions.mut(at) = sessions[at + 1];
+    }
+    for (size_t at = from; at > to; --at) {
+        sessions.mut(at) = sessions[at - 1];
+    }
+    sessions.mut(to) = moved;
+    for (size_t at = 0; at != count_; ++at) {
+        if (sessions[at].id == activeId) {
+            active_ = at;
+        }
+    }
+    publishSessionsChanged();
+}
+
+void SessionSetImpl::pin(size_t index, bool value) {
+    if (index >= count_ || sessions[index].pinned == value) {
+        return;
+    }
+    size_t pins = 0;
+    for (size_t at = 0; at != count_; ++at) {
+        pins += sessions[at].pinned;
+    }
+    sessions.mut(index).pinned = value;
+    const size_t target = value ? pins : pins - 1;
+    if (index == target) {
+        publishSessionsChanged();
+    } else {
+        move(index, target);
+    }
+}
+
+StringView SessionSetImpl::directory(size_t index) const {
+    return index < count_ ? sessions[index].terminal->directory() : StringView{};
+}
+
+bool SessionSetImpl::newSessionNear(size_t index) {
+    if (index >= count_ || directory(index).empty()) {
+        return false;
+    }
+    try {
+        const LaunchCommand command = composer.launch->inDirectory(directory(index));
+        open(command);
+        move(active_, index + 1);
+        return true;
+    } catch (...) {
+        return false;
+    }
 }
 
 void SessionSetImpl::publishSessionsChanged() {

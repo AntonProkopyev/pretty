@@ -17,6 +17,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <commctrl.h>
 #include <imm.h>
 #include <ole2.h>
 #include <shellapi.h>
@@ -24,6 +25,7 @@
 #include <algorithm>
 #include <climits>
 #include <cstring>
+#include <cstdlib>
 #include <new>
 #include <string>
 
@@ -42,6 +44,21 @@ namespace {
 
     struct PlatformWin32;
     struct WindowWin32;
+
+    enum class ChromePart { None, Tab, CloseTab, NewTab, Minimize, Maximize, CloseWindow };
+
+    struct ChromeHit {
+        ChromePart part = ChromePart::None;
+        size_t index = 0;
+        bool operator==(const ChromeHit&) const = default;
+    };
+
+    constexpr UINT renameTabCommand = 0x6101;
+    constexpr UINT pinTabCommand = 0x6102;
+    constexpr UINT newTabHereCommand = 0x6103;
+    constexpr UINT closeTabCommand = 0x6104;
+    constexpr UINT renameTabMessage = WM_APP + 2;
+    LRESULT CALLBACK renameProcedure(HWND window, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR id, DWORD_PTR data);
 
     LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM wparam, LPARAM lparam);
 
@@ -734,7 +751,18 @@ namespace {
         RECT tabBounds(size_t index) const;
         RECT newTabBounds() const;
         void paintChrome(HDC dc) const;
-        bool chromeClick(LPARAM position);
+        ChromeHit chromeHit(POINT point) const;
+        size_t tabIndex(u64 identity) const;
+        void chromeAction(ChromeHit hit);
+        void chromeDown(POINT point, UINT button);
+        void chromeUp(POINT point, UINT button);
+        void chromeMotion(POINT point);
+        void cancelChromePress();
+        void chromeMenu(POINT point);
+        void menuAction(UINT command);
+        void beginRename(size_t index);
+        void finishRename(bool accept);
+        void updateTooltip();
         bool revokeDrop() noexcept;
         LRESULT message(HWND source, UINT message, WPARAM wparam, LPARAM lparam);
         WindowInfo refreshInfo();
@@ -802,6 +830,16 @@ namespace {
         bool globalHotkeyRegistered = false;
         bool chromeTracking = false;
         POINT chromePointer{-1, -1};
+        ChromeHit chromePressed;
+        POINT chromePressPoint{};
+        UINT chromePressButton = 0;
+        u64 chromePressTab = 0;
+        bool chromeDragging = false;
+        HWND tooltip = nullptr;
+        std::wstring tooltipText;
+        HWND renameEdit = nullptr;
+        u64 renameTab = 0;
+        u64 menuTab = 0;
         ULONGLONG lastAttention = 0;
         u16 modifiers = 0;
         u8 shiftKeys = 0;
@@ -938,11 +976,25 @@ WindowWin32& WindowWin32::initialize(const WindowOptions& options) {
     RECT client{};
     STD_INSIST(GetClientRect(handle, &client) != 0);
     const HWND chromeWindow = CreateWindowExW(
-        0, windowClassName, L"", WS_CHILD | WS_VISIBLE,
+        0, windowClassName, L"", WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
         0, 0, client.right, chromeHeight,
         handle, nullptr, platform.instance_, this
     );
     STD_INSIST(chromeWindow != nullptr && chrome == chromeWindow);
+    INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_WIN95_CLASSES};
+    STD_INSIST(InitCommonControlsEx(&controls) != 0);
+    tooltip = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr, WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, chrome, nullptr, platform.instance_, nullptr);
+    STD_INSIST(tooltip != nullptr);
+    TOOLINFOW tool{};
+    // The default comctl32 activation context uses the V2 TOOLINFO size.
+    tool.cbSize = TTTOOLINFOW_V2_SIZE;
+    tool.uFlags = TTF_SUBCLASS;
+    tool.hwnd = chrome;
+    tool.uId = 1;
+    GetClientRect(chrome, &tool.rect);
+    tool.lpszText = const_cast<wchar_t*>(L"");
+    STD_INSIST(SendMessageW(tooltip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&tool)) != 0);
+    SendMessageW(tooltip, TTM_SETMAXTIPWIDTH, 0, MulDiv(600, static_cast<int>(dpi), 96));
     const HWND renderSurface = CreateWindowExW(
         0,
         windowClassName,
@@ -1078,8 +1130,16 @@ RECT WindowWin32::tabBounds(size_t index) const {
     const LONG controls = client.right - 3 * MulDiv(46, scale, 96);
     const LONG available = std::max<LONG>(0, controls - left - MulDiv(44, scale, 96));
     const size_t count = tabs == nullptr ? 0 : tabs->count();
-    const LONG width = count == 0 ? 0 : std::min<LONG>(MulDiv(240, scale, 96), available / static_cast<LONG>(count));
-    return {left + static_cast<LONG>(index) * width, frameHeight(), left + static_cast<LONG>(index + 1) * width, client.bottom - MulDiv(2, scale, 96)};
+    // ponytail: O(n) per tab; cache the pinned prefix if hundreds of tabs become common.
+    size_t pins = 0;
+    for (size_t at = 0; at != count; ++at) {
+        pins += tabs->pinned(at);
+    }
+    const LONG pinWidth = count == 0 ? 0 : std::min<LONG>(MulDiv(44, scale, 96), available / static_cast<LONG>(count));
+    const LONG pinnedWidth = static_cast<LONG>(pins) * pinWidth;
+    const LONG width = count == pins ? 0 : std::min<LONG>(MulDiv(240, scale, 96), (available - pinnedWidth) / static_cast<LONG>(count - pins));
+    const LONG start = index < pins ? left + static_cast<LONG>(index) * pinWidth : left + pinnedWidth + static_cast<LONG>(index - pins) * width;
+    return {start, frameHeight(), start + (index < pins ? pinWidth : width), client.bottom - MulDiv(2, scale, 96)};
 }
 
 RECT WindowWin32::newTabBounds() const {
@@ -1209,7 +1269,7 @@ void WindowWin32::paintChrome(HDC target) const {
             const LONG centerX = cell.right - MulDiv(16, scale, 96);
             const LONG centerY = (cell.top + cell.bottom) / 2;
             RECT close{centerX - iconRadius, centerY - iconRadius, centerX + iconRadius, centerY + iconRadius};
-            if (cell.right - cell.left >= MulDiv(48, scale, 96) && PtInRect(&close, chromePointer)) {
+            if (!tabs->pinned(at) && cell.right - cell.left >= MulDiv(48, scale, 96) && PtInRect(&close, chromePointer)) {
                 SelectObject(dc, GetStockObject(NULL_PEN));
                 SetDCBrushColor(dc, tone(14));
                 Ellipse(dc, close.left, close.top, close.right, close.bottom);
@@ -1219,8 +1279,14 @@ void WindowWin32::paintChrome(HDC target) const {
             label.left += MulDiv(12, scale, 96);
             label.right -= MulDiv(32, scale, 96);
             const std::wstring text = wide(tabs->title(at));
-            DrawTextW(dc, text.c_str(), static_cast<int>(text.length()), &label, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-            if (cell.right - cell.left >= MulDiv(48, scale, 96)) {
+            if (tabs->pinned(at)) {
+                const int length = text.size() > 1 && IS_HIGH_SURROGATE(text[0]) ? 2 : std::min<int>(1, text.size());
+                RECT iconLabel = cell;
+                DrawTextW(dc, text.c_str(), length, &iconLabel, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            } else {
+                DrawTextW(dc, text.c_str(), static_cast<int>(text.length()), &label, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            }
+            if (!tabs->pinned(at) && cell.right - cell.left >= MulDiv(48, scale, 96)) {
                 const LONG half = MulDiv(4, scale, 96);
                 MoveToEx(dc, centerX - half, centerY - half, nullptr);
                 LineTo(dc, centerX + half, centerY + half);
@@ -1283,35 +1349,34 @@ void WindowWin32::paintChrome(HDC target) const {
     DeleteDC(dc);
 }
 
-bool WindowWin32::chromeClick(LPARAM position) {
+ChromeHit WindowWin32::chromeHit(POINT point) const {
     RECT bounds{};
-    STD_INSIST(chrome != nullptr && GetWindowRect(chrome, &bounds) != 0);
-    const LONG x = static_cast<short>(LOWORD(position)) - bounds.left;
-    const LONG y = static_cast<short>(HIWORD(position)) - bounds.top;
+    if (chrome == nullptr || GetClientRect(chrome, &bounds) == 0) {
+        return {};
+    }
+    const LONG x = point.x;
+    const LONG y = point.y;
     if (y < frameHeight() || y >= bounds.bottom - bounds.top) {
-        return false;
+        return {};
     }
     const LONG width = bounds.right - bounds.left;
     const LONG button = std::max<LONG>(46, MulDiv(46, static_cast<int>(dpi()), 96));
     const LONG controlsLeft = width - 3 * button;
     if (x >= controlsLeft && x < width) {
         if (x >= width - button) {
-            requestClose();
+            return {ChromePart::CloseWindow};
         } else if (x >= width - 2 * button) {
-            requestMaximized(IsZoomed(handle) == 0);
+            return {ChromePart::Maximize};
         } else {
-            requestIconify();
+            return {ChromePart::Minimize};
         }
-        return true;
     }
     if (tabs == nullptr || tabs->count() == 0) {
-        return false;
+        return {};
     }
-    const POINT point{x, y};
     const RECT add = newTabBounds();
     if (PtInRect(&add, point)) {
-        tabs->open();
-        return true;
+        return {ChromePart::NewTab};
     }
     const size_t count = tabs->count();
     for (size_t index = 0; index != count; ++index) {
@@ -1320,14 +1385,235 @@ bool WindowWin32::chromeClick(LPARAM position) {
             continue;
         }
         const int scale = static_cast<int>(dpi());
-        if (cell.right - cell.left >= MulDiv(48, scale, 96) && x >= cell.right - MulDiv(28, scale, 96)) {
-            tabs->close(index);
+        if (!tabs->pinned(index) && cell.right - cell.left >= MulDiv(48, scale, 96) && x >= cell.right - MulDiv(28, scale, 96)) {
+            return {ChromePart::CloseTab, index};
         } else {
-            tabs->select(index);
+            return {ChromePart::Tab, index};
         }
-        return true;
     }
-    return false;
+    return {};
+}
+
+size_t WindowWin32::tabIndex(u64 identity) const {
+    const size_t count = tabs == nullptr ? 0 : tabs->count();
+    for (size_t index = 0; index != count; ++index) {
+        if (tabs->identity(index) == identity) {
+            return index;
+        }
+    }
+    return count;
+}
+
+void WindowWin32::chromeAction(ChromeHit hit) {
+    switch (hit.part) {
+    case ChromePart::Tab: tabs->select(hit.index); break;
+    case ChromePart::CloseTab: tabs->close(hit.index); break;
+    case ChromePart::NewTab: tabs->open(); break;
+    case ChromePart::Minimize: requestIconify(); break;
+    case ChromePart::Maximize: requestMaximized(IsZoomed(handle) == 0); break;
+    case ChromePart::CloseWindow: requestClose(); break;
+    case ChromePart::None: break;
+    }
+}
+
+void WindowWin32::cancelChromePress() {
+    chromePressed = {};
+    chromePressTab = 0;
+    chromePressButton = 0;
+    chromeDragging = false;
+    requestTabsRedraw();
+}
+
+void WindowWin32::chromeDown(POINT point, UINT button) {
+    finishRename(true);
+    SetFocus(surface);
+    chromePressed = chromeHit(point);
+    if (chromePressed.part == ChromePart::None) {
+        if (button == WM_LBUTTONDOWN) {
+            ClientToScreen(chrome, &point);
+            SendMessageW(handle, WM_NCLBUTTONDOWN, HTCAPTION, MAKELPARAM(point.x, point.y));
+        }
+        return;
+    }
+    chromePressPoint = point;
+    chromePressButton = button;
+    chromeDragging = false;
+    chromePressTab = chromePressed.part == ChromePart::Tab || chromePressed.part == ChromePart::CloseTab ? tabs->identity(chromePressed.index) : 0;
+    SetCapture(chrome);
+    SendMessageW(tooltip, TTM_POP, 0, 0);
+    if (button == WM_LBUTTONDOWN && chromePressed.part == ChromePart::Tab) {
+        tabs->select(chromePressed.index);
+    }
+    requestTabsRedraw();
+}
+
+void WindowWin32::chromeUp(POINT point, UINT button) {
+    const ChromeHit released = chromeHit(point);
+    const ChromeHit pressed = chromePressed;
+    const UINT pressedButton = chromePressButton;
+    const bool dragging = chromeDragging;
+    const u64 identity = chromePressTab;
+    cancelChromePress();
+    if (GetCapture() == chrome) {
+        ReleaseCapture();
+    }
+    if (dragging || pressedButton != button) {
+        return;
+    }
+    if (identity != 0) {
+        if (released.part != ChromePart::Tab && released.part != ChromePart::CloseTab) {
+            return;
+        }
+        if (tabs->identity(released.index) != identity) {
+            return;
+        }
+        if (button == WM_MBUTTONDOWN || (pressed.part == ChromePart::CloseTab && released.part == ChromePart::CloseTab)) {
+            tabs->close(released.index);
+        }
+    } else if (button == WM_LBUTTONDOWN && released == pressed) {
+        chromeAction(released);
+    }
+}
+
+void WindowWin32::chromeMotion(POINT point) {
+    chromePointer = point;
+    if (tabs != nullptr && chromePressButton == WM_LBUTTONDOWN && chromePressed.part == ChromePart::Tab) {
+        chromeDragging = chromeDragging || std::abs(static_cast<int>(point.x - chromePressPoint.x)) >= GetSystemMetrics(SM_CXDRAG) || std::abs(static_cast<int>(point.y - chromePressPoint.y)) >= GetSystemMetrics(SM_CYDRAG);
+        const ChromeHit over = chromeHit(point);
+        const size_t from = tabIndex(chromePressTab);
+        if (chromeDragging && from < tabs->count() && (over.part == ChromePart::Tab || over.part == ChromePart::CloseTab) && tabs->pinned(from) == tabs->pinned(over.index)) {
+            tabs->move(from, over.index);
+        }
+    }
+    updateTooltip();
+    requestTabsRedraw();
+}
+
+void WindowWin32::updateTooltip() {
+    if (tooltip == nullptr || chrome == nullptr) {
+        return;
+    }
+    const ChromeHit hit = chromeHit(chromePointer);
+    std::wstring text;
+    switch (hit.part) {
+    case ChromePart::Tab:
+        text = wide(tabs->title(hit.index));
+        if (!tabs->directory(hit.index).empty()) {
+            text += L"\n" + wide(tabs->directory(hit.index));
+        }
+        break;
+    case ChromePart::CloseTab: text = L"Close tab (Ctrl+Shift+W)"; break;
+    case ChromePart::NewTab: text = L"New tab (Ctrl+Shift+T)"; break;
+    case ChromePart::Minimize: text = L"Minimize"; break;
+    case ChromePart::Maximize: text = IsZoomed(handle) ? L"Restore" : L"Maximize"; break;
+    case ChromePart::CloseWindow: text = L"Close window (Alt+F4)"; break;
+    case ChromePart::None: break;
+    }
+    if (text != tooltipText) {
+        SendMessageW(tooltip, TTM_POP, 0, 0);
+        tooltipText = text;
+        TOOLINFOW tool{};
+        tool.cbSize = TTTOOLINFOW_V2_SIZE;
+        tool.hwnd = chrome;
+        tool.uId = 1;
+        tool.lpszText = tooltipText.data();
+        SendMessageW(tooltip, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&tool));
+    }
+}
+
+void WindowWin32::beginRename(size_t index) {
+    finishRename(false);
+    renameTab = tabs->identity(index);
+    RECT cell = tabBounds(index);
+    cell.right = std::max<LONG>(cell.right, cell.left + MulDiv(180, static_cast<int>(dpi()), 96));
+    const std::wstring title = wide(tabs->title(index));
+    renameEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", title.c_str(), WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL, cell.left + 4, cell.top, cell.right - cell.left - 8, cell.bottom - cell.top, chrome, nullptr, platform.instance_, nullptr);
+    if (renameEdit == nullptr) {
+        return;
+    }
+    SetWindowSubclass(renameEdit, renameProcedure, 1, reinterpret_cast<DWORD_PTR>(this));
+    SendMessageW(renameEdit, WM_SETFONT, reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)), TRUE);
+    SendMessageW(renameEdit, EM_SETLIMITTEXT, 256, 0);
+    SendMessageW(renameEdit, EM_SETSEL, 0, -1);
+    SetFocus(renameEdit);
+}
+
+void WindowWin32::finishRename(bool accept) {
+    if (renameEdit == nullptr) {
+        return;
+    }
+    const HWND edit = renameEdit;
+    renameEdit = nullptr;
+    const size_t index = tabIndex(renameTab);
+    if (accept && tabs != nullptr && index < tabs->count()) {
+        wchar_t text[257]{};
+        const int length = GetWindowTextW(edit, text, 257);
+        const int bytes = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text, length, nullptr, 0, nullptr, nullptr);
+        if (length == 0 || bytes > 0) {
+            std::string title(static_cast<size_t>(bytes), '\0');
+            WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text, length, title.data(), bytes, nullptr, nullptr);
+            tabs->rename(index, StringView(reinterpret_cast<const u8*>(title.data()), title.size()));
+        }
+    }
+    DestroyWindow(edit);
+    requestTabsRedraw();
+}
+
+namespace {
+    LRESULT CALLBACK renameProcedure(HWND window, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR id, DWORD_PTR data) {
+        auto* const owner = reinterpret_cast<WindowWin32*>(data);
+        if (message == WM_KEYDOWN && (wparam == VK_RETURN || wparam == VK_ESCAPE)) {
+            owner->finishRename(wparam == VK_RETURN);
+            SetFocus(owner->surface);
+            return 0;
+        }
+        if (message == WM_NCDESTROY) {
+            RemoveWindowSubclass(window, renameProcedure, id);
+        }
+        return DefSubclassProc(window, message, wparam, lparam);
+    }
+}
+
+void WindowWin32::chromeMenu(POINT point) {
+    finishRename(true);
+    const ChromeHit hit = chromeHit(point);
+    if (hit.part != ChromePart::Tab && hit.part != ChromePart::CloseTab) {
+        return;
+    }
+    menuTab = tabs->identity(hit.index);
+    const HMENU menu = CreatePopupMenu();
+    if (menu == nullptr) {
+        return;
+    }
+    AppendMenuW(menu, MF_STRING, renameTabCommand, L"Rename tab");
+    AppendMenuW(menu, MF_STRING, pinTabCommand, tabs->pinned(hit.index) ? L"Unpin tab" : L"Pin tab");
+    AppendMenuW(menu, MF_STRING | (tabs->directory(hit.index).empty() ? MF_GRAYED : 0), newTabHereCommand, L"New tab in this folder");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, closeTabCommand, L"Close tab\tCtrl+Shift+W");
+    ClientToScreen(chrome, &point);
+    TrackPopupMenuEx(menu, TPM_RIGHTBUTTON, point.x, point.y, handle, nullptr);
+    DestroyMenu(menu);
+}
+
+void WindowWin32::menuAction(UINT selected) {
+    const size_t index = tabIndex(menuTab);
+    if (tabs == nullptr || index >= tabs->count()) {
+        return;
+    }
+    switch (selected) {
+    case renameTabCommand:
+        renameTab = menuTab;
+        PostMessageW(handle, renameTabMessage, 0, 0);
+        break;
+    case pinTabCommand: tabs->pin(index, !tabs->pinned(index)); break;
+    case newTabHereCommand:
+        if (!tabs->openNear(index)) {
+            MessageBoxW(handle, L"Could not open a tab in this folder.", L"New tab", MB_OK | MB_ICONERROR);
+        }
+        break;
+    case closeTabCommand: tabs->close(index); break;
+    default: break;
+    }
 }
 
 WindowInfo WindowWin32::refreshInfo() {
@@ -1638,6 +1924,17 @@ LRESULT WindowWin32::scrollMessage(UINT message_, WPARAM wparam, LPARAM lparam) 
 
 LRESULT WindowWin32::message(HWND source, UINT message_, WPARAM wparam, LPARAM lparam) {
     switch (message_) {
+    case renameTabMessage:
+        if (tabs != nullptr && tabIndex(renameTab) < tabs->count()) {
+            beginRename(tabIndex(renameTab));
+        }
+        return 0;
+    case WM_COMMAND:
+        if (lparam == 0 && LOWORD(wparam) >= renameTabCommand && LOWORD(wparam) <= closeTabCommand) {
+            menuAction(LOWORD(wparam));
+            return 0;
+        }
+        return DefWindowProcW(source, message_, wparam, lparam);
     case WM_NCCALCSIZE:
         return source == handle && customFrame
             ? 0
@@ -1670,8 +1967,13 @@ LRESULT WindowWin32::message(HWND source, UINT message_, WPARAM wparam, LPARAM l
                     || wparam == HTBOTTOMLEFT || wparam == HTBOTTOMRIGHT)) {
             return SendMessageW(handle, message_, wparam, lparam);
         }
-        if (source == handle && chromeClick(lparam)) {
-            return 0;
+        if (source == handle && (wparam == HTCAPTION || wparam == HTCLOSE || wparam == HTMAXBUTTON || wparam == HTMINBUTTON)) {
+            POINT point{static_cast<short>(LOWORD(lparam)), static_cast<short>(HIWORD(lparam))};
+            ScreenToClient(chrome, &point);
+            if (chromeHit(point).part != ChromePart::None) {
+                chromeDown(point, WM_LBUTTONDOWN);
+                return 0;
+            }
         }
         return DefWindowProcW(source, message_, wparam, lparam);
     case WM_CLOSE:
@@ -1699,6 +2001,8 @@ LRESULT WindowWin32::message(HWND source, UINT message_, WPARAM wparam, LPARAM l
         if (source != handle) {
             SetWindowLongPtrW(source, GWLP_USERDATA, 0);
             if (source == chrome) {
+                tooltip = nullptr;
+                renameEdit = nullptr;
                 chrome = nullptr;
             } else if (source == surface) {
                 surface = nullptr;
@@ -1785,7 +2089,7 @@ LRESULT WindowWin32::message(HWND source, UINT message_, WPARAM wparam, LPARAM l
         return 0;
     case WM_MOUSEMOVE:
         if (source == chrome) {
-            chromePointer = {static_cast<short>(LOWORD(lparam)), static_cast<short>(HIWORD(lparam))};
+            chromeMotion({static_cast<short>(LOWORD(lparam)), static_cast<short>(HIWORD(lparam))});
             if (!chromeTracking) {
                 TRACKMOUSEEVENT tracking{sizeof(tracking), TME_LEAVE, chrome, 0};
                 chromeTracking = TrackMouseEvent(&tracking) != 0;
@@ -1809,21 +2113,13 @@ LRESULT WindowWin32::message(HWND source, UINT message_, WPARAM wparam, LPARAM l
         return 0;
     case WM_LBUTTONDOWN:
         if (source == chrome) {
-            SetFocus(surface);
-            POINT point{
-                static_cast<short>(LOWORD(lparam)),
-                static_cast<short>(HIWORD(lparam)),
-            };
-            ClientToScreen(chrome, &point);
-            const LPARAM screen = MAKELPARAM(static_cast<WORD>(point.x), static_cast<WORD>(point.y));
-            if (!chromeClick(screen)) {
-                ReleaseCapture();
-                SendMessageW(handle, WM_NCLBUTTONDOWN, HTCAPTION, screen);
-            }
+            chromeDown({static_cast<short>(LOWORD(lparam)), static_cast<short>(HIWORD(lparam))}, WM_LBUTTONDOWN);
             return 0;
         }
+        finishRename(true);
     case WM_LBUTTONUP:
         if (source == chrome) {
+            chromeUp({static_cast<short>(LOWORD(lparam)), static_cast<short>(HIWORD(lparam))}, WM_LBUTTONDOWN);
             return 0;
         }
     case WM_RBUTTONDOWN:
@@ -1832,7 +2128,37 @@ LRESULT WindowWin32::message(HWND source, UINT message_, WPARAM wparam, LPARAM l
     case WM_MBUTTONUP:
     case WM_XBUTTONDOWN:
     case WM_XBUTTONUP:
+        if (source == chrome) {
+            const POINT point{static_cast<short>(LOWORD(lparam)), static_cast<short>(HIWORD(lparam))};
+            if (message_ == WM_MBUTTONDOWN) {
+                chromeDown(point, WM_MBUTTONDOWN);
+            } else if (message_ == WM_MBUTTONUP) {
+                chromeUp(point, WM_MBUTTONDOWN);
+            } else if (message_ == WM_RBUTTONUP) {
+                chromeMenu(point);
+            }
+            return 0;
+        }
         return pointerButtonMessage(message_, wparam, lparam);
+    case WM_CANCELMODE:
+    case WM_CAPTURECHANGED:
+        if (source == chrome) {
+            cancelChromePress();
+            return 0;
+        }
+        return DefWindowProcW(source, message_, wparam, lparam);
+    case WM_CONTEXTMENU:
+        if (source == chrome || source == handle) {
+            POINT point{static_cast<short>(LOWORD(lparam)), static_cast<short>(HIWORD(lparam))};
+            if (lparam == -1 && tabs != nullptr && tabs->count() != 0) {
+                const RECT cell = tabBounds(tabs->active());
+                point = {cell.left + 8, cell.bottom - 1};
+            } else {
+                ScreenToClient(chrome, &point);
+            }
+            chromeMenu(point);
+        }
+        return 0;
     case WM_MOUSEWHEEL:
     case WM_MOUSEHWHEEL:
         return scrollMessage(message_, wparam, lparam);
@@ -1994,6 +2320,18 @@ void WindowWin32::requestTabs(WindowTabs* tabs_) {
 void WindowWin32::requestTabsRedraw() {
     if (handle != nullptr && customFrame) {
         if (chrome != nullptr) {
+            if (tooltip != nullptr) {
+                TOOLINFOW tool{};
+                tool.cbSize = TTTOOLINFOW_V2_SIZE;
+                tool.hwnd = chrome;
+                tool.uId = 1;
+                GetClientRect(chrome, &tool.rect);
+                SendMessageW(tooltip, TTM_NEWTOOLRECTW, 0, reinterpret_cast<LPARAM>(&tool));
+                updateTooltip();
+            }
+            if (renameEdit != nullptr && (tabs == nullptr || tabIndex(renameTab) == tabs->count())) {
+                finishRename(false);
+            }
             InvalidateRect(chrome, nullptr, FALSE);
         }
     }
@@ -2060,7 +2398,7 @@ void WindowWin32::requestMove(i32 x, i32 y) {
 
 void WindowWin32::requestFocus() {
     SetForegroundWindow(handle);
-    SetFocus(surface == nullptr ? handle : surface);
+    SetFocus(renameEdit != nullptr ? renameEdit : (surface == nullptr ? handle : surface));
     refreshInfo();
 }
 

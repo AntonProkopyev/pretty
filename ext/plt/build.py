@@ -156,6 +156,7 @@ elif system == "Windows":
     backend_deps = [
         dependency(ldflags=[
             "-luser32",
+            "-lcomctl32",
             "-lshell32",
             "-lole32",
             "-limm32",

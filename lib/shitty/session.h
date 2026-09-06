@@ -27,8 +27,15 @@ struct SessionSet {
     // composer.sessionsChangedListeners.
     virtual size_t count() const = 0;
     virtual size_t activeIndex() const = 0;
+    virtual u64 identity(size_t index) const = 0;
     // The session's last published title; empty until its shell set one.
     virtual stl::StringView title(size_t index) const = 0;
+    virtual bool pinned(size_t index) const = 0;
+    virtual void pin(size_t index, bool value) = 0;
+    virtual void rename(size_t index, stl::StringView title) = 0;
+    virtual void move(size_t from, size_t to) = 0;
+    virtual stl::StringView directory(size_t index) const = 0;
+    virtual bool newSessionNear(size_t index) = 0;
     virtual void activate(size_t index) = 0;
     virtual void newSession() = 0;
     // False when the closed session was the last one: the caller owns

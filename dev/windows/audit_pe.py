@@ -13,6 +13,7 @@ FORBIDDEN = {"msys-2.0.dll", "cygwin1.dll"}
 SYSTEM = {
     "advapi32.dll",
     "cfgmgr32.dll",
+    "comctl32.dll",
     "comdlg32.dll",
     "d2d1.dll",
     "d3d11.dll",

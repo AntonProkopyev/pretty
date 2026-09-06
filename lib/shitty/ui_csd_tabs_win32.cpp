@@ -50,6 +50,40 @@ namespace {
             return composer.sessions == nullptr ? 0 : composer.sessions->activeIndex();
         }
 
+        u64 identity(size_t index) const override {
+            return composer.sessions == nullptr ? 0 : composer.sessions->identity(index);
+        }
+
+        bool pinned(size_t index) const override {
+            return composer.sessions != nullptr && composer.sessions->pinned(index);
+        }
+
+        void pin(size_t index, bool value) override {
+            if (composer.sessions != nullptr) {
+                composer.sessions->pin(index, value);
+            }
+        }
+
+        void rename(size_t index, StringView title) override {
+            if (composer.sessions != nullptr) {
+                composer.sessions->rename(index, title);
+            }
+        }
+
+        void move(size_t from, size_t to) override {
+            if (composer.sessions != nullptr) {
+                composer.sessions->move(from, to);
+            }
+        }
+
+        StringView directory(size_t index) const override {
+            return composer.sessions == nullptr ? StringView{} : composer.sessions->directory(index);
+        }
+
+        bool openNear(size_t index) override {
+            return composer.sessions != nullptr && composer.sessions->newSessionNear(index);
+        }
+
         StringView title(size_t index) const override {
             if (composer.sessions == nullptr) {
                 return {};

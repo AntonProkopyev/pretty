@@ -13,6 +13,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <commctrl.h>
 #include <objbase.h>
 #include <shellapi.h>
 #include <shlobj.h>
@@ -141,11 +142,20 @@ namespace {
     struct TabProbe final: WindowTabs {
         size_t count() const override { return 2; }
         size_t active() const override { return active_; }
+        u64 identity(size_t index) const override { return order[index] + 1; }
+        bool pinned(size_t index) const override { return pins[order[index]]; }
+        void pin(size_t index, bool value) override { pins[order[index]] = value; }
+        void move(size_t from, size_t to) override {
+            if (from != to) {
+                std::swap(order[from], order[to]);
+                active_ = 1 - active_;
+            }
+        }
         StringView title(size_t index) const override {
             if (paintTarget != nullptr && GetPixel(paintTarget, 0, 0) != RGB(255, 0, 255)) {
                 partialPaint = true;
             }
-            return index == 0 ? StringView(u8"first") : StringView(u8"second");
+            return order[index] == 0 ? StringView(u8"first") : StringView(u8"second");
         }
         WindowColor background() const override { return {38, 50, 56}; }
         WindowColor foreground() const override { return {236, 239, 241}; }
@@ -156,6 +166,8 @@ namespace {
         size_t active_ = 0;
         size_t closed = 0;
         size_t opened = 0;
+        size_t order[2]{0, 1};
+        bool pins[2]{false, false};
         HDC paintTarget = nullptr;
         mutable bool partialPaint = false;
     };
@@ -475,23 +487,83 @@ int main(int argc, char** argv) {
         return 55;
     }
     SendMessageW(chrome, WM_LBUTTONDOWN, 0, MAKELPARAM(tabLeft + 2 * cell + MulDiv(22, chromeScale, 96), tabMiddle));
+    if (tabs.opened != 0) {
+        return 61;
+    }
+    SendMessageW(chrome, WM_LBUTTONUP, 0, MAKELPARAM(tabLeft + 2 * cell + MulDiv(22, chromeScale, 96), tabMiddle));
     if (tabs.opened != 1) {
         return 50;
     }
     SendMessageW(chrome, WM_LBUTTONDOWN, 0, MAKELPARAM(tabLeft + cell / 2, tabMiddle));
+    SendMessageW(chrome, WM_LBUTTONUP, 0, MAKELPARAM(tabLeft + cell / 2, tabMiddle));
     if (tabs.active_ != 0) {
         return 51;
     }
     SendMessageW(chrome, WM_LBUTTONDOWN, 0, MAKELPARAM(tabLeft + cell + cell / 2, tabMiddle));
+    SendMessageW(chrome, WM_LBUTTONUP, 0, MAKELPARAM(tabLeft + cell + cell / 2, tabMiddle));
     if (tabs.active_ != 1) {
         return 52;
     }
     SendMessageW(chrome, WM_LBUTTONDOWN, 0, MAKELPARAM(tabLeft + 2 * cell - MulDiv(16, chromeScale, 96), tabMiddle));
+    if (tabs.closed != 0) {
+        return 62;
+    }
+    SendMessageW(chrome, WM_LBUTTONUP, 0, MAKELPARAM(-1, -1));
+    if (tabs.closed != 0) {
+        return 63;
+    }
+    SendMessageW(chrome, WM_LBUTTONDOWN, 0, MAKELPARAM(tabLeft + 2 * cell - MulDiv(16, chromeScale, 96), tabMiddle));
+    SendMessageW(chrome, WM_LBUTTONUP, 0, MAKELPARAM(tabLeft + 2 * cell - MulDiv(16, chromeScale, 96), tabMiddle));
     if (tabs.closed != 2) {
         return 53;
     }
+    tabs.closed = 0;
+    SendMessageW(chrome, WM_MBUTTONDOWN, 0, MAKELPARAM(tabLeft + cell / 2, tabMiddle));
+    if (tabs.closed != 0) {
+        return 64;
+    }
+    SendMessageW(chrome, WM_MBUTTONUP, 0, MAKELPARAM(tabLeft + cell / 2, tabMiddle));
+    if (tabs.closed != 1) {
+        return 65;
+    }
+    SendMessageW(chrome, WM_LBUTTONDOWN, 0, MAKELPARAM(tabLeft + cell / 2, tabMiddle));
+    SendMessageW(chrome, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(tabLeft + cell + cell / 2, tabMiddle));
+    SendMessageW(chrome, WM_LBUTTONUP, 0, MAKELPARAM(tabLeft + cell + cell / 2, tabMiddle));
+    if (tabs.identity(1) != 1 || tabs.active_ != 1) {
+        return 66;
+    }
+    tabs.closed = 0;
+    SendMessageW(chrome, WM_LBUTTONDOWN, 0, MAKELPARAM(tabLeft + 2 * cell - MulDiv(16, chromeScale, 96), tabMiddle));
+    tabs.move(1, 0);
+    SendMessageW(chrome, WM_LBUTTONUP, 0, MAKELPARAM(tabLeft + 2 * cell - MulDiv(16, chromeScale, 96), tabMiddle));
+    if (tabs.closed != 0) {
+        return 67;
+    }
+    HWND tip = nullptr;
+    for (HWND candidate = FindWindowExW(nullptr, nullptr, TOOLTIPS_CLASSW, nullptr); candidate != nullptr; candidate = FindWindowExW(nullptr, candidate, TOOLTIPS_CLASSW, nullptr)) {
+        TOOLINFOW probe{};
+        probe.cbSize = TTTOOLINFOW_V2_SIZE;
+        probe.hwnd = chrome;
+        probe.uId = 1;
+        if (GetWindowThreadProcessId(candidate, nullptr) == GetCurrentThreadId() && SendMessageW(candidate, TTM_GETTOOLINFOW, 0, reinterpret_cast<LPARAM>(&probe))) {
+            tip = candidate;
+            break;
+        }
+    }
+    SendMessageW(chrome, WM_MOUSEMOVE, 0, MAKELPARAM(tabLeft + 2 * cell + MulDiv(22, chromeScale, 96), tabMiddle));
+    wchar_t tooltipText[256]{};
+    TOOLINFOW tool{};
+    tool.cbSize = TTTOOLINFOW_V2_SIZE;
+    tool.hwnd = chrome;
+    tool.uId = 1;
+    tool.lpszText = tooltipText;
+    SendMessageW(tip, TTM_GETTEXTW, 256, reinterpret_cast<LPARAM>(&tool));
+    if (tip == nullptr || std::wcsstr(tooltipText, L"Ctrl+Shift+T") == nullptr) {
+        std::fwprintf(stderr, L"tooltip=%p text=%ls\n", tip, tooltipText);
+        return 68;
+    }
     if (argc == 2 && std::strcmp(argv[1], "--chrome-only") == 0) {
-        std::puts("tab strip: buffered paint, rounded shoulders, hover, clipped layout, open/select/close");
+        std::puts("tab strip: paint, shape, hover, release/cancel, middle close, drag identity, tooltips");
         return 0;
     }
     window.requestResize(320, 200);
@@ -914,6 +986,7 @@ int main(int argc, char** argv) {
         0,
         MAKELPARAM(closeLeft + 2 * chromeButton + chromeButton / 2, tabMiddle)
     );
+    SendMessageW(chrome, WM_LBUTTONUP, 0, MAKELPARAM(closeLeft + 2 * chromeButton + chromeButton / 2, tabMiddle));
     platform.run();
 
     return events.calls == 1 ? 0 : 16;

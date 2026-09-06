@@ -186,7 +186,7 @@ else:
     darwin_backend = dependency()
 
 windows_backend = dependency(
-    ldflags=["-ldwrite", "-lgdi32", "-lole32", "-luuid", "-luser32", "-lshell32", "-limm32"]
+    ldflags=["-ldwrite", "-lgdi32", "-lole32", "-luuid", "-luser32", "-lshell32", "-limm32", "-lcomctl32"]
 ) if windows else dependency()
 
 threads = dependency(ldflags=["-pthread"])

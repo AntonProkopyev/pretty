@@ -270,6 +270,25 @@ On Windows, run `st.exe` or `pt.exe`. The default command comes from
 .\st.exe -e pwsh.exe
 ```
 
+On Windows, drag tabs to reorder them and middle-click to close them.
+The close button acts on release; releasing outside cancels the click. Right-click
+a tab to rename it, pin it, or open a neighbour in its current folder.
+Pinned tabs stay on the left. Rename with Enter, cancel with Esc, or clear
+the name to resume automatic shell titles. Hover for full titles and button
+shortcuts.
+
+Opening a neighbour in the same folder requires the shell to report its
+directory using OSC 7. For Zsh in WSL, copy `shell-integration.zsh` from the
+Windows ZIP to `~/.config/shitty/shell-integration.zsh` and source it from
+your Zsh configuration:
+
+```zsh
+source ~/.config/shitty/shell-integration.zsh
+```
+
+The hook activates only inside Pretty/Shitty. Restart the terminal after
+installing it. The folder action is disabled until the shell reports a path.
+
 Choose the initial terminal size and scrollback capacity:
 
 ```sh

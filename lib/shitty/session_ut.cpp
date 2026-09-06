@@ -121,7 +121,9 @@ namespace {
         {
         }
 
-        PtyHandle* spawn(ObjPool& owner, const LaunchCommand&) override {
+        PtyHandle* spawn(ObjPool& owner, const LaunchCommand& command) override {
+            directory.reset();
+            directory.append(command.directory.data(), command.directory.used());
             StubHandle* const handle = owner.make<StubHandle>(composer, &destroyed, blockNextWrite ? &writeEntered : nullptr, blockNextWrite ? &writeResumed : nullptr);
             blockNextWrite = false;
             handles.pushBack(handle);
@@ -134,6 +136,7 @@ namespace {
         bool blockNextWrite = false;
         bool writeEntered = false;
         bool writeResumed = false;
+        Buffer directory;
     };
 
     void publish(IntrusiveList& listeners) {
@@ -209,6 +212,55 @@ void ModelProbe::onListen(void*) {
 }
 
 STD_TEST_SUITE(SessionSet) {
+    STD_TEST(TabMetadataFollowsTheSessionAcrossMovesAndTitles) {
+        Harness harness;
+        harness.newTab();
+        harness.newTab();
+        Vterm* const visible = harness.sessions->activeTerminal();
+        const u64 identity = harness.sessions->identity(2);
+        harness.sessions->rename(2, StringView(u8"Build logs"));
+        harness.sessions->move(2, 0);
+        STD_INSIST(harness.sessions->activeTerminal() == visible);
+        STD_INSIST(harness.sessions->activeIndex() == 0);
+        STD_INSIST(harness.sessions->identity(0) == identity);
+        const StringView title(u8"\x1b]2;automatic title\x07");
+        visible->feedPty(title);
+        STD_INSIST(harness.sessions->title(0) == StringView(u8"Build logs"));
+        harness.sessions->rename(0, {});
+        STD_INSIST(harness.sessions->title(0) == StringView(u8"automatic title"));
+        harness.sessions->pin(0, true);
+        harness.sessions->move(0, 2);
+        STD_INSIST(harness.sessions->pinned(0));
+        STD_INSIST(harness.sessions->identity(0) == identity);
+        harness.sessions->move(2, 0);
+        STD_INSIST(harness.sessions->identity(0) == identity);
+        harness.sessions->pin(2, true);
+        harness.sessions->pin(0, false);
+        STD_INSIST(harness.sessions->pinned(0));
+        STD_INSIST(!harness.sessions->pinned(1));
+        STD_INSIST(harness.sessions->identity(1) == identity);
+        STD_INSIST(harness.sessions->activeTerminal() == visible);
+    }
+
+    STD_TEST(NewNeighbourUsesReportedDirectoryWithoutChangingOtherSessions) {
+        Harness harness;
+        STD_INSIST(!harness.sessions->newSessionNear(0));
+        harness.newTab();
+        harness.sessions->activate(0);
+        const u64 identity = harness.sessions->identity(0);
+        const StringView cwd(u8"\x1b]7;file://localhost/tmp/build%20space\x07");
+        harness.sessions->activeTerminal()->feedPty(cwd);
+        STD_INSIST(harness.sessions->newSessionNear(0));
+        STD_INSIST(harness.sessions->count() == 3);
+        STD_INSIST(harness.sessions->activeIndex() == 1);
+        STD_INSIST(harness.sessions->identity(0) == identity);
+        STD_INSIST(StringView(harness.pty.directory) == StringView(u8"/tmp/build space"));
+        STD_INSIST(!harness.sessions->newSessionNear(99));
+        harness.sessions->move(99, 0);
+        harness.sessions->rename(99, StringView(u8"ignored"));
+        STD_INSIST(harness.sessions->count() == 3);
+    }
+
     STD_TEST(TabModelCommitsBeforeItNotifies) {
         Harness harness;
         ModelProbe probe{harness.sessions};
