@@ -1067,16 +1067,34 @@ LRESULT WindowWin32::hitTest(LPARAM position) const {
     return point.y < bounds.top + captionHeight() ? HTCAPTION : HTCLIENT;
 }
 
-void WindowWin32::paintChrome(HDC dc) const {
+void WindowWin32::paintChrome(HDC target) const {
     if (!customFrame || handle == nullptr) {
         return;
     }
     RECT bounds{};
-    if (chrome == nullptr || GetClipBox(dc, &bounds) == ERROR) {
+    if (chrome == nullptr || GetClientRect(chrome, &bounds) == 0) {
         return;
     }
     const LONG width = bounds.right - bounds.left;
     const LONG height = bounds.bottom - bounds.top;
+    if (width <= 0 || height <= 0) {
+        return;
+    }
+    const HDC dc = CreateCompatibleDC(target);
+    if (dc == nullptr) {
+        return;
+    }
+    const HBITMAP bitmap = CreateCompatibleBitmap(target, width, height);
+    if (bitmap == nullptr) {
+        DeleteDC(dc);
+        return;
+    }
+    const HGDIOBJ previousBitmap = SelectObject(dc, bitmap);
+    if (previousBitmap == nullptr || previousBitmap == HGDI_ERROR) {
+        DeleteObject(bitmap);
+        DeleteDC(dc);
+        return;
+    }
     const WindowColor background = tabs == nullptr
         ? WindowColor{38, 50, 56}
         : tabs->background();
@@ -1158,6 +1176,11 @@ void WindowWin32::paintChrome(HDC dc) const {
     DeleteObject(controlBrush);
     SelectObject(dc, previousFont);
     DeleteObject(font);
+    // Publish the completed strip so title updates never expose the cleared background.
+    BitBlt(target, 0, 0, width, height, dc, 0, 0, SRCCOPY);
+    SelectObject(dc, previousBitmap);
+    DeleteObject(bitmap);
+    DeleteDC(dc);
 }
 
 bool WindowWin32::chromeClick(LPARAM position) {

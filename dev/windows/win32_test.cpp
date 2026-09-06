@@ -142,6 +142,9 @@ namespace {
         size_t count() const override { return 2; }
         size_t active() const override { return active_; }
         StringView title(size_t index) const override {
+            if (paintTarget != nullptr && GetPixel(paintTarget, 0, 0) != RGB(255, 0, 255)) {
+                partialPaint = true;
+            }
             return index == 0 ? StringView(u8"first") : StringView(u8"second");
         }
         WindowColor background() const override { return {38, 50, 56}; }
@@ -153,6 +156,8 @@ namespace {
         size_t active_ = 0;
         size_t closed = 0;
         size_t opened = 0;
+        HDC paintTarget = nullptr;
+        mutable bool partialPaint = false;
     };
 
     bool clipboardRoundTrip(Clipboard& clipboard, StringView value) {
@@ -341,7 +346,7 @@ namespace {
     }
 }
 
-int main() {
+int main(int argc, char** argv) {
     ObjPool::Ref pool = ObjPool::fromMemory();
     Platform& platform = *Platform::create(*pool);
     APTTYPE apartment;
@@ -407,7 +412,20 @@ int main() {
         return 54;
     }
     const HGDIOBJ previousBitmap = SelectObject(memoryDc, bitmap);
+    SetPixel(memoryDc, 0, 0, RGB(255, 0, 255));
+    tabs.paintTarget = memoryDc;
     SendMessageW(chrome, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(memoryDc), PRF_CLIENT);
+    tabs.paintTarget = nullptr;
+    const LONG sampleX = chromeControls + chromeButton / 2;
+    const LONG sampleY = chromeClient.bottom / 2 + 4;
+    const COLORREF controlPixel = GetPixel(memoryDc, sampleX, sampleY);
+    const HRGN clip = CreateRectRgn(chromeControls, 0, chromeClient.right, chromeClient.bottom);
+    SelectClipRgn(memoryDc, clip);
+    SetPixel(memoryDc, sampleX, sampleY, RGB(255, 0, 255));
+    SendMessageW(chrome, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(memoryDc), PRF_CLIENT);
+    const bool clippedControl = GetPixel(memoryDc, sampleX, sampleY) == controlPixel;
+    SelectClipRgn(memoryDc, nullptr);
+    DeleteObject(clip);
     size_t controlInk = 0;
     const LONG controlScan = std::max<LONG>(0, chromeClient.right - 256);
     for (LONG x = controlScan; x < chromeClient.right; ++x) {
@@ -422,8 +440,20 @@ int main() {
     DeleteObject(bitmap);
     DeleteDC(memoryDc);
     ReleaseDC(chrome, chromeDc);
+    if (tabs.partialPaint) {
+        std::fprintf(stderr, "tab repaint exposed an unfinished frame\n");
+        return 56;
+    }
+    if (!clippedControl) {
+        std::fprintf(stderr, "partial tab repaint changed control placement\n");
+        return 57;
+    }
     if (controlInk < 60) {
         return 55;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--chrome-only") == 0) {
+        std::puts("tab repaint: complete frames and stable clipped layout");
+        return 0;
     }
     SendMessageW(chrome, WM_LBUTTONDOWN, 0, MAKELPARAM(chromeControls - chromePlus / 2, 15));
     if (tabs.opened != 1) {
