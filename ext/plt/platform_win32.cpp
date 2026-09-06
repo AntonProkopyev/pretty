@@ -34,7 +34,6 @@ namespace {
     constexpr wchar_t windowClassName[] = L"Shitty.Platform.Win32";
     constexpr wchar_t dropTargetProperty[] = L"Shitty.Win32.DropTarget";
     constexpr UINT_PTR frameTimerId = 1;
-    constexpr UINT chromePaintMessage = WM_APP + 1;
     constexpr int globalToggleHotkeyId = 0x5348;
     constexpr UINT frameDelayMilliseconds = 8;
     constexpr ULONGLONG attentionIntervalMilliseconds = 1000;
@@ -732,6 +731,8 @@ namespace {
         LONG frameHeight() const;
         LONG captionHeight() const;
         LRESULT hitTest(LPARAM position) const;
+        RECT tabBounds(size_t index) const;
+        RECT newTabBounds() const;
         void paintChrome(HDC dc) const;
         bool chromeClick(LPARAM position);
         bool revokeDrop() noexcept;
@@ -799,6 +800,8 @@ namespace {
         bool frameTimerArmed = false;
         bool customFrame = false;
         bool globalHotkeyRegistered = false;
+        bool chromeTracking = false;
+        POINT chromePointer{-1, -1};
         ULONGLONG lastAttention = 0;
         u16 modifiers = 0;
         u8 shiftKeys = 0;
@@ -911,7 +914,7 @@ WindowWin32& WindowWin32::initialize(const WindowOptions& options) {
     const UINT dpi = GetDpiForSystem();
     const LONG chromeHeight = GetSystemMetricsForDpi(SM_CYSIZEFRAME, dpi)
         + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi)
-        + GetSystemMetricsForDpi(SM_CYCAPTION, dpi);
+        + MulDiv(34, static_cast<int>(dpi), 96);
     const RECT outer = customFrame
         ? RECT{0, 0, static_cast<LONG>(width), static_cast<LONG>(height) + chromeHeight}
         : adjustedClientRect(style, 0, width, height, dpi);
@@ -999,7 +1002,7 @@ RECT WindowWin32::outerRect(u32 width, u32 height, UINT dpi) const {
     if (customFrame) {
         const LONG chromeHeight = GetSystemMetricsForDpi(SM_CYSIZEFRAME, dpi)
             + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi)
-            + GetSystemMetricsForDpi(SM_CYCAPTION, dpi);
+            + MulDiv(34, static_cast<int>(dpi), 96);
         return {
             .left = 0,
             .top = 0,
@@ -1028,7 +1031,7 @@ LONG WindowWin32::frameHeight() const {
 
 LONG WindowWin32::captionHeight() const {
     return frameHeight()
-        + GetSystemMetricsForDpi(SM_CYCAPTION, dpi());
+        + MulDiv(34, static_cast<int>(dpi()), 96);
 }
 
 LRESULT WindowWin32::hitTest(LPARAM position) const {
@@ -1067,6 +1070,27 @@ LRESULT WindowWin32::hitTest(LPARAM position) const {
     return point.y < bounds.top + captionHeight() ? HTCAPTION : HTCLIENT;
 }
 
+RECT WindowWin32::tabBounds(size_t index) const {
+    RECT client{};
+    GetClientRect(chrome, &client);
+    const int scale = static_cast<int>(dpi());
+    const LONG left = MulDiv(12, scale, 96);
+    const LONG controls = client.right - 3 * MulDiv(46, scale, 96);
+    const LONG available = std::max<LONG>(0, controls - left - MulDiv(44, scale, 96));
+    const size_t count = tabs == nullptr ? 0 : tabs->count();
+    const LONG width = count == 0 ? 0 : std::min<LONG>(MulDiv(240, scale, 96), available / static_cast<LONG>(count));
+    return {left + static_cast<LONG>(index) * width, frameHeight(), left + static_cast<LONG>(index + 1) * width, client.bottom - MulDiv(2, scale, 96)};
+}
+
+RECT WindowWin32::newTabBounds() const {
+    const size_t count = tabs == nullptr ? 0 : tabs->count();
+    RECT bounds = tabBounds(count == 0 ? 0 : count - 1);
+    const int scale = static_cast<int>(dpi());
+    bounds.left = bounds.right + MulDiv(8, scale, 96);
+    bounds.right = bounds.left + MulDiv(28, scale, 96);
+    return bounds;
+}
+
 void WindowWin32::paintChrome(HDC target) const {
     if (!customFrame || handle == nullptr) {
         return;
@@ -1084,7 +1108,7 @@ void WindowWin32::paintChrome(HDC target) const {
     if (dc == nullptr) {
         return;
     }
-    const HBITMAP bitmap = CreateCompatibleBitmap(target, width, height);
+    const HBITMAP bitmap = CreateCompatibleBitmap(target, width * 2, height * 2);
     if (bitmap == nullptr) {
         DeleteDC(dc);
         return;
@@ -1095,12 +1119,23 @@ void WindowWin32::paintChrome(HDC target) const {
         DeleteDC(dc);
         return;
     }
+    // Supersample this small GDI strip to smooth the curved tab shoulders.
+    SetMapMode(dc, MM_ANISOTROPIC);
+    SetWindowExtEx(dc, width, height, nullptr);
+    SetViewportExtEx(dc, width * 2, height * 2, nullptr);
     const WindowColor background = tabs == nullptr
         ? WindowColor{38, 50, 56}
         : tabs->background();
     const WindowColor foreground = tabs == nullptr
         ? WindowColor{236, 239, 241}
         : tabs->foreground();
+    const auto tone = [&](int amount) {
+        return RGB(
+            (background.red * (100 - amount) + foreground.red * amount) / 100,
+            (background.green * (100 - amount) + foreground.green * amount) / 100,
+            (background.blue * (100 - amount) + foreground.blue * amount) / 100
+        );
+    };
     const COLORREF bg = RGB(background.red, background.green, background.blue);
     const COLORREF fg = RGB(foreground.red, foreground.green, foreground.blue);
     const HBRUSH backgroundBrush = CreateSolidBrush(bg);
@@ -1109,48 +1144,105 @@ void WindowWin32::paintChrome(HDC target) const {
     DeleteObject(backgroundBrush);
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, fg);
-    const int fontHeight = -MulDiv(12, static_cast<int>(dpi()), 72);
+    const int scale = static_cast<int>(dpi());
+    const int fontHeight = -MulDiv(10, scale, 72);
     const HFONT font = CreateFontW(
         fontHeight, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-        CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI"
+        ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Segoe UI"
     );
     const HGDIOBJ previousFont = SelectObject(dc, font);
     const LONG button = std::max<LONG>(46, MulDiv(46, static_cast<int>(dpi()), 96));
     const LONG controlsLeft = width - 3 * button;
+    const HGDIOBJ previousPen = SelectObject(dc, GetStockObject(NULL_PEN));
+    const HGDIOBJ previousBrush = SelectObject(dc, GetStockObject(DC_BRUSH));
+    const LONG radius = MulDiv(10, scale, 96);
+    const LONG icon = MulDiv(12, scale, 96);
+    const LONG iconRadius = MulDiv(10, scale, 96);
     if (tabs != nullptr && tabs->count() != 0 && controlsLeft > 48) {
-        constexpr LONG left = 8;
-        const LONG plus = std::max<LONG>(34, MulDiv(34, static_cast<int>(dpi()), 96));
-        const LONG tabsRight = controlsLeft - plus;
         const size_t count = tabs->count();
-        const LONG cellWidth = std::max<LONG>(1, (tabsRight - left) / static_cast<LONG>(count));
-        const HBRUSH activeBrush = CreateSolidBrush(RGB(
-            std::min<int>(255, background.red + 16),
-            std::min<int>(255, background.green + 16),
-            std::min<int>(255, background.blue + 16)
-        ));
+        const size_t active = tabs->active();
         for (size_t at = 0; at != count; ++at) {
-            RECT cell{
-                left + static_cast<LONG>(at) * cellWidth,
-                frameHeight(),
-                at + 1 == count ? tabsRight : left + static_cast<LONG>(at + 1) * cellWidth,
-                height,
-            };
-            if (at == tabs->active()) {
-                FillRect(dc, &cell, activeBrush);
+            const RECT cell = tabBounds(at);
+            if (at != active && PtInRect(&cell, chromePointer)) {
+                SetDCBrushColor(dc, tone(4));
+                const LONG inset = MulDiv(2, scale, 96);
+                RoundRect(dc, cell.left + inset, cell.top + inset, cell.right - inset, cell.bottom - inset, 2 * radius, 2 * radius);
+            }
+            if (at + 1 != count && at != active && at + 1 != active) {
+                SetDCBrushColor(dc, tone(28));
+                const LONG middle = (cell.top + cell.bottom) / 2;
+                RoundRect(dc, cell.right, middle - icon / 2, cell.right + std::max(1, MulDiv(1, scale, 96)), middle + icon / 2, 2, 2);
+            }
+        }
+        const RECT selected = tabBounds(active);
+        if (selected.right > selected.left) {
+            const LONG r = std::min<LONG>(radius, (selected.right - selected.left) / 3);
+            const LONG bend = MulDiv(r, 55, 100);
+            BeginPath(dc);
+            MoveToEx(dc, selected.left - r, selected.bottom, nullptr);
+            const POINT lowerLeft[]{{selected.left - r + bend, selected.bottom}, {selected.left, selected.bottom - r + bend}, {selected.left, selected.bottom - r}};
+            PolyBezierTo(dc, lowerLeft, 3);
+            LineTo(dc, selected.left, selected.top + r);
+            const POINT upperLeft[]{{selected.left, selected.top + r - bend}, {selected.left + r - bend, selected.top}, {selected.left + r, selected.top}};
+            PolyBezierTo(dc, upperLeft, 3);
+            LineTo(dc, selected.right - r, selected.top);
+            const POINT upperRight[]{{selected.right - r + bend, selected.top}, {selected.right, selected.top + r - bend}, {selected.right, selected.top + r}};
+            PolyBezierTo(dc, upperRight, 3);
+            LineTo(dc, selected.right, selected.bottom - r);
+            const POINT lowerRight[]{{selected.right, selected.bottom - r + bend}, {selected.right + r - bend, selected.bottom}, {selected.right + r, selected.bottom}};
+            PolyBezierTo(dc, lowerRight, 3);
+            CloseFigure(dc);
+            EndPath(dc);
+            SetDCBrushColor(dc, tone(7));
+            FillPath(dc);
+            RECT seam{0, selected.bottom, width, height};
+            FillRect(dc, &seam, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
+        }
+        const HPEN iconPen = CreatePen(PS_SOLID, std::max(1, MulDiv(1, scale, 96)), fg);
+        SelectObject(dc, iconPen);
+        for (size_t at = 0; at != count; ++at) {
+            const RECT cell = tabBounds(at);
+            if (cell.right <= cell.left) {
+                continue;
+            }
+            const LONG centerX = cell.right - MulDiv(16, scale, 96);
+            const LONG centerY = (cell.top + cell.bottom) / 2;
+            RECT close{centerX - iconRadius, centerY - iconRadius, centerX + iconRadius, centerY + iconRadius};
+            if (cell.right - cell.left >= MulDiv(48, scale, 96) && PtInRect(&close, chromePointer)) {
+                SelectObject(dc, GetStockObject(NULL_PEN));
+                SetDCBrushColor(dc, tone(14));
+                Ellipse(dc, close.left, close.top, close.right, close.bottom);
+                SelectObject(dc, iconPen);
             }
             RECT label = cell;
-            label.left += 10;
-            label.right -= 24;
+            label.left += MulDiv(12, scale, 96);
+            label.right -= MulDiv(32, scale, 96);
             const std::wstring text = wide(tabs->title(at));
             DrawTextW(dc, text.c_str(), static_cast<int>(text.length()), &label, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-            RECT close = cell;
-            close.left = close.right - 24;
-            DrawTextW(dc, L"×", 1, &close, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            if (cell.right - cell.left >= MulDiv(48, scale, 96)) {
+                const LONG half = MulDiv(4, scale, 96);
+                MoveToEx(dc, centerX - half, centerY - half, nullptr);
+                LineTo(dc, centerX + half, centerY + half);
+                MoveToEx(dc, centerX + half, centerY - half, nullptr);
+                LineTo(dc, centerX - half, centerY + half);
+            }
         }
-        DeleteObject(activeBrush);
-        RECT add{tabsRight, frameHeight(), controlsLeft, height};
-        DrawTextW(dc, L"+", 1, &add, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        const RECT add = newTabBounds();
+        const LONG centerX = (add.left + add.right) / 2;
+        const LONG centerY = (add.top + add.bottom) / 2;
+        if (PtInRect(&add, chromePointer)) {
+            SelectObject(dc, GetStockObject(NULL_PEN));
+            SetDCBrushColor(dc, tone(7));
+            Ellipse(dc, add.left, centerY - (add.right - add.left) / 2, add.right, centerY + (add.right - add.left) / 2);
+            SelectObject(dc, iconPen);
+        }
+        MoveToEx(dc, centerX - icon / 2, centerY, nullptr);
+        LineTo(dc, centerX + icon / 2, centerY);
+        MoveToEx(dc, centerX, centerY - icon / 2, nullptr);
+        LineTo(dc, centerX, centerY + icon / 2);
+        SelectObject(dc, GetStockObject(NULL_PEN));
+        DeleteObject(iconPen);
     }
     const HBRUSH controlBrush = CreateSolidBrush(fg);
     const LONG middle = height / 2;
@@ -1176,8 +1268,16 @@ void WindowWin32::paintChrome(HDC target) const {
     DeleteObject(controlBrush);
     SelectObject(dc, previousFont);
     DeleteObject(font);
+    SelectObject(dc, previousBrush);
+    SelectObject(dc, previousPen);
     // Publish the completed strip so title updates never expose the cleared background.
-    BitBlt(target, 0, 0, width, height, dc, 0, 0, SRCCOPY);
+    SetMapMode(dc, MM_TEXT);
+    const int previousStretch = SetStretchBltMode(target, HALFTONE);
+    POINT previousOrigin{};
+    SetBrushOrgEx(target, 0, 0, &previousOrigin);
+    StretchBlt(target, 0, 0, width, height, dc, 0, 0, width * 2, height * 2, SRCCOPY);
+    SetBrushOrgEx(target, previousOrigin.x, previousOrigin.y, nullptr);
+    SetStretchBltMode(target, previousStretch);
     SelectObject(dc, previousBitmap);
     DeleteObject(bitmap);
     DeleteDC(dc);
@@ -1187,6 +1287,10 @@ bool WindowWin32::chromeClick(LPARAM position) {
     RECT bounds{};
     STD_INSIST(chrome != nullptr && GetWindowRect(chrome, &bounds) != 0);
     const LONG x = static_cast<short>(LOWORD(position)) - bounds.left;
+    const LONG y = static_cast<short>(HIWORD(position)) - bounds.top;
+    if (y < frameHeight() || y >= bounds.bottom - bounds.top) {
+        return false;
+    }
     const LONG width = bounds.right - bounds.left;
     const LONG button = std::max<LONG>(46, MulDiv(46, static_cast<int>(dpi()), 96));
     const LONG controlsLeft = width - 3 * button;
@@ -1203,28 +1307,27 @@ bool WindowWin32::chromeClick(LPARAM position) {
     if (tabs == nullptr || tabs->count() == 0) {
         return false;
     }
-    const LONG plus = std::max<LONG>(34, MulDiv(34, static_cast<int>(dpi()), 96));
-    const LONG tabsRight = controlsLeft - plus;
-    constexpr LONG left = 8;
-    if (x < left) {
-        return false;
-    }
-    if (x >= tabsRight) {
+    const POINT point{x, y};
+    const RECT add = newTabBounds();
+    if (PtInRect(&add, point)) {
         tabs->open();
         return true;
     }
     const size_t count = tabs->count();
-    const LONG cellWidth = std::max<LONG>(1, (tabsRight - left) / static_cast<LONG>(count));
-    const size_t index = std::min<size_t>(count - 1, static_cast<size_t>((x - left) / cellWidth));
-    const LONG cellRight = index + 1 == count
-        ? tabsRight
-        : left + static_cast<LONG>(index + 1) * cellWidth;
-    if (x >= cellRight - 24) {
-        tabs->close(index);
-    } else {
-        tabs->select(index);
+    for (size_t index = 0; index != count; ++index) {
+        const RECT cell = tabBounds(index);
+        if (!PtInRect(&cell, point)) {
+            continue;
+        }
+        const int scale = static_cast<int>(dpi());
+        if (cell.right - cell.left >= MulDiv(48, scale, 96) && x >= cell.right - MulDiv(28, scale, 96)) {
+            tabs->close(index);
+        } else {
+            tabs->select(index);
+        }
+        return true;
     }
-    return true;
+    return false;
 }
 
 WindowInfo WindowWin32::refreshInfo() {
@@ -1535,12 +1638,6 @@ LRESULT WindowWin32::scrollMessage(UINT message_, WPARAM wparam, LPARAM lparam) 
 
 LRESULT WindowWin32::message(HWND source, UINT message_, WPARAM wparam, LPARAM lparam) {
     switch (message_) {
-    case chromePaintMessage:
-        if (source == chrome) {
-            InvalidateRect(chrome, nullptr, FALSE);
-            UpdateWindow(chrome);
-        }
-        return 0;
     case WM_NCCALCSIZE:
         return source == handle && customFrame
             ? 0
@@ -1688,11 +1785,20 @@ LRESULT WindowWin32::message(HWND source, UINT message_, WPARAM wparam, LPARAM l
         return 0;
     case WM_MOUSEMOVE:
         if (source == chrome) {
+            chromePointer = {static_cast<short>(LOWORD(lparam)), static_cast<short>(HIWORD(lparam))};
+            if (!chromeTracking) {
+                TRACKMOUSEEVENT tracking{sizeof(tracking), TME_LEAVE, chrome, 0};
+                chromeTracking = TrackMouseEvent(&tracking) != 0;
+            }
+            requestTabsRedraw();
             return 0;
         }
         return pointerMotionMessage(lparam);
     case WM_MOUSELEAVE:
         if (source == chrome) {
+            chromeTracking = false;
+            chromePointer = {-1, -1};
+            requestTabsRedraw();
             return 0;
         }
         pointerInside = false;
@@ -1836,7 +1942,7 @@ LRESULT WindowWin32::message(HWND source, UINT message_, WPARAM wparam, LPARAM l
         STD_INSIST(InvalidateRect(surface == nullptr ? handle : surface, nullptr, FALSE) != 0);
         return 0;
     case WM_PAINT: {
-        if (source != handle && frameTimerArmed) {
+        if (source == surface && frameTimerArmed) {
             KillTimer(handle, frameTimerId);
             frameTimerArmed = false;
         }
@@ -1888,7 +1994,7 @@ void WindowWin32::requestTabs(WindowTabs* tabs_) {
 void WindowWin32::requestTabsRedraw() {
     if (handle != nullptr && customFrame) {
         if (chrome != nullptr) {
-            PostMessageW(chrome, chromePaintMessage, 0, 0);
+            InvalidateRect(chrome, nullptr, FALSE);
         }
     }
 }

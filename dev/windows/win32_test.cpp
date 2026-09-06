@@ -391,14 +391,20 @@ int main(int argc, char** argv) {
     if (chrome == nullptr || chrome == surface) {
         return 49;
     }
+    window.requestResize(1200, 200);
     TabProbe tabs;
     window.requestTabs(&tabs);
     RECT chromeClient{};
     GetClientRect(chrome, &chromeClient);
     const UINT chromeDpi = GetDpiForWindow(handle);
     const LONG chromeButton = std::max<LONG>(46, MulDiv(46, chromeDpi == 0 ? 96 : chromeDpi, 96));
-    const LONG chromePlus = std::max<LONG>(34, MulDiv(34, chromeDpi == 0 ? 96 : chromeDpi, 96));
     const LONG chromeControls = chromeClient.right - 3 * chromeButton;
+    const int chromeScale = chromeDpi == 0 ? 96 : chromeDpi;
+    const LONG tabLeft = MulDiv(12, chromeScale, 96);
+    const LONG cell = std::min<LONG>(MulDiv(240, chromeScale, 96), (chromeControls - tabLeft - MulDiv(44, chromeScale, 96)) / 2);
+    const LONG tabTop = GetSystemMetricsForDpi(SM_CYSIZEFRAME, chromeScale) + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, chromeScale);
+    const LONG tabBottom = chromeClient.bottom - MulDiv(2, chromeScale, 96);
+    const LONG tabMiddle = (tabTop + tabBottom) / 2;
     HDC const chromeDc = GetDC(chrome);
     HDC const memoryDc = chromeDc == nullptr ? nullptr : CreateCompatibleDC(chromeDc);
     HBITMAP const bitmap = memoryDc == nullptr ? nullptr : CreateCompatibleBitmap(
@@ -416,6 +422,19 @@ int main(int argc, char** argv) {
     tabs.paintTarget = memoryDc;
     SendMessageW(chrome, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(memoryDc), PRF_CLIENT);
     tabs.paintTarget = nullptr;
+    const COLORREF strip = GetPixel(memoryDc, 0, 0);
+    const bool rounded = GetPixel(memoryDc, tabLeft, tabTop + 1) == strip
+        && GetPixel(memoryDc, tabLeft + cell / 2, tabTop + 1) != strip
+        && GetPixel(memoryDc, tabLeft - 1, tabBottom - 1) != strip;
+    const LONG hoverX = tabLeft + cell + cell / 2;
+    const LONG hoverY = tabBottom - MulDiv(4, chromeScale, 96);
+    const COLORREF inactive = GetPixel(memoryDc, hoverX, hoverY);
+    SendMessageW(chrome, WM_MOUSEMOVE, 0, MAKELPARAM(hoverX, hoverY));
+    SendMessageW(chrome, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(memoryDc), PRF_CLIENT);
+    const bool hovered = GetPixel(memoryDc, hoverX, hoverY) != inactive;
+    SendMessageW(chrome, WM_MOUSELEAVE, 0, 0);
+    SendMessageW(chrome, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(memoryDc), PRF_CLIENT);
+    const bool unhovered = GetPixel(memoryDc, hoverX, hoverY) == inactive;
     const LONG sampleX = chromeControls + chromeButton / 2;
     const LONG sampleY = chromeClient.bottom / 2 + 4;
     const COLORREF controlPixel = GetPixel(memoryDc, sampleX, sampleY);
@@ -448,31 +467,34 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "partial tab repaint changed control placement\n");
         return 57;
     }
+    if (!rounded || !hovered || !unhovered) {
+        std::fprintf(stderr, "tab appearance: rounded=%d hover=%d leave=%d\n", rounded, hovered, unhovered);
+        return 58;
+    }
     if (controlInk < 60) {
         return 55;
     }
-    if (argc == 2 && std::strcmp(argv[1], "--chrome-only") == 0) {
-        std::puts("tab repaint: complete frames and stable clipped layout");
-        return 0;
-    }
-    SendMessageW(chrome, WM_LBUTTONDOWN, 0, MAKELPARAM(chromeControls - chromePlus / 2, 15));
+    SendMessageW(chrome, WM_LBUTTONDOWN, 0, MAKELPARAM(tabLeft + 2 * cell + MulDiv(22, chromeScale, 96), tabMiddle));
     if (tabs.opened != 1) {
         return 50;
     }
-    SendMessageW(chrome, WM_LBUTTONDOWN, 0, MAKELPARAM(16, 15));
+    SendMessageW(chrome, WM_LBUTTONDOWN, 0, MAKELPARAM(tabLeft + cell / 2, tabMiddle));
     if (tabs.active_ != 0) {
         return 51;
     }
-    const LONG tabsRight = chromeControls - chromePlus;
-    const LONG cell = (tabsRight - 8) / 2;
-    SendMessageW(chrome, WM_LBUTTONDOWN, 0, MAKELPARAM(8 + cell + 8, 15));
+    SendMessageW(chrome, WM_LBUTTONDOWN, 0, MAKELPARAM(tabLeft + cell + cell / 2, tabMiddle));
     if (tabs.active_ != 1) {
         return 52;
     }
-    SendMessageW(chrome, WM_LBUTTONDOWN, 0, MAKELPARAM(8 + 2 * cell - 8, 15));
+    SendMessageW(chrome, WM_LBUTTONDOWN, 0, MAKELPARAM(tabLeft + 2 * cell - MulDiv(16, chromeScale, 96), tabMiddle));
     if (tabs.closed != 2) {
         return 53;
     }
+    if (argc == 2 && std::strcmp(argv[1], "--chrome-only") == 0) {
+        std::puts("tab strip: buffered paint, rounded shoulders, hover, clipped layout, open/select/close");
+        return 0;
+    }
+    window.requestResize(320, 200);
     RECT outer{};
     POINT clientOrigin{};
     if (GetWindowRect(handle, &outer) == 0
@@ -507,8 +529,7 @@ int main(int argc, char** argv) {
     }
     if (hitTest(
             center,
-            outer.top + frameHeight
-                + GetSystemMetricsForDpi(SM_CYCAPTION, dpi) + 1
+            clientOrigin.y + 1
         ) != HTCLIENT) {
         return 43;
     }
@@ -754,9 +775,11 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "shown size=%ux%u\n", shown.width, shown.height);
         return 9;
     }
+    UpdateWindow(surface);
     frame.calls = 0;
     frame.stopOnFrame = true;
     window.requestFrame();
+    SendMessageW(chrome, WM_PAINT, 0, 0);
     platform.run();
     if (frame.calls == 0
             || frame.seen.width == 0
@@ -889,7 +912,7 @@ int main(int argc, char** argv) {
         chrome,
         WM_LBUTTONDOWN,
         0,
-        MAKELPARAM(closeLeft + 2 * chromeButton + chromeButton / 2, 15)
+        MAKELPARAM(closeLeft + 2 * chromeButton + chromeButton / 2, tabMiddle)
     );
     platform.run();
 
