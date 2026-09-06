@@ -1198,7 +1198,7 @@ void WindowWin32::paintChrome(HDC target) const {
     };
     const COLORREF bg = RGB(background.red, background.green, background.blue);
     const COLORREF fg = RGB(foreground.red, foreground.green, foreground.blue);
-    const HBRUSH backgroundBrush = CreateSolidBrush(bg);
+    const HBRUSH backgroundBrush = CreateSolidBrush(tone(7));
     RECT bar{0, 0, width, height};
     FillRect(dc, &bar, backgroundBrush);
     DeleteObject(backgroundBrush);
@@ -1225,7 +1225,7 @@ void WindowWin32::paintChrome(HDC target) const {
         for (size_t at = 0; at != count; ++at) {
             const RECT cell = tabBounds(at);
             if (at != active && PtInRect(&cell, chromePointer)) {
-                SetDCBrushColor(dc, tone(4));
+                SetDCBrushColor(dc, tone(11));
                 const LONG inset = MulDiv(2, scale, 96);
                 RoundRect(dc, cell.left + inset, cell.top + inset, cell.right - inset, cell.bottom - inset, 2 * radius, 2 * radius);
             }
@@ -1254,7 +1254,7 @@ void WindowWin32::paintChrome(HDC target) const {
             PolyBezierTo(dc, lowerRight, 3);
             CloseFigure(dc);
             EndPath(dc);
-            SetDCBrushColor(dc, tone(7));
+            SetDCBrushColor(dc, bg);
             FillPath(dc);
             RECT seam{0, selected.bottom, width, height};
             FillRect(dc, &seam, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
@@ -1299,7 +1299,7 @@ void WindowWin32::paintChrome(HDC target) const {
         const LONG centerY = (add.top + add.bottom) / 2;
         if (PtInRect(&add, chromePointer)) {
             SelectObject(dc, GetStockObject(NULL_PEN));
-            SetDCBrushColor(dc, tone(7));
+            SetDCBrushColor(dc, tone(14));
             Ellipse(dc, add.left, centerY - (add.right - add.left) / 2, add.right, centerY + (add.right - add.left) / 2);
             SelectObject(dc, iconPen);
         }

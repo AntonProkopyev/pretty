@@ -435,6 +435,9 @@ int main(int argc, char** argv) {
     SendMessageW(chrome, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(memoryDc), PRF_CLIENT);
     tabs.paintTarget = nullptr;
     const COLORREF strip = GetPixel(memoryDc, 0, 0);
+    const bool connected = GetPixel(memoryDc, tabLeft + cell / 2, tabTop + 1) == RGB(38, 50, 56)
+        && GetPixel(memoryDc, tabLeft + cell / 2, chromeClient.bottom - 1) == RGB(38, 50, 56)
+        && strip != RGB(38, 50, 56);
     const bool rounded = GetPixel(memoryDc, tabLeft, tabTop + 1) == strip
         && GetPixel(memoryDc, tabLeft + cell / 2, tabTop + 1) != strip
         && GetPixel(memoryDc, tabLeft - 1, tabBottom - 1) != strip;
@@ -479,8 +482,8 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "partial tab repaint changed control placement\n");
         return 57;
     }
-    if (!rounded || !hovered || !unhovered) {
-        std::fprintf(stderr, "tab appearance: rounded=%d hover=%d leave=%d\n", rounded, hovered, unhovered);
+    if (!connected || !rounded || !hovered || !unhovered) {
+        std::fprintf(stderr, "tab appearance: connected=%d rounded=%d hover=%d leave=%d\n", connected, rounded, hovered, unhovered);
         return 58;
     }
     if (controlInk < 60) {
